@@ -1,15 +1,8 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import type { DevPortInfo } from '../../shared/types.js';
 
 const execAsync = promisify(exec);
-
-export interface PortInfo {
-  port: number;
-  pid: number;
-  protocol: string;
-  processName: string;
-  command: string;
-}
 
 // Common dev ports to always check
 const DEV_PORTS = [3000, 3010, 4000, 4173, 5000, 5173, 5432, 8000, 8080, 8888, 9000, 27017];
@@ -27,8 +20,8 @@ export async function getPortKillerStatus(): Promise<{ available: boolean; error
   }
 }
 
-export async function getActiveDevPorts(): Promise<PortInfo[]> {
-  const ports: PortInfo[] = [];
+export async function getActiveDevPorts(): Promise<DevPortInfo[]> {
+  const ports: DevPortInfo[] = [];
 
   try {
     // Use lsof to find processes listening on dev ports
@@ -58,24 +51,35 @@ export async function getActiveDevPorts(): Promise<PortInfo[]> {
       // Only include dev-relevant ports
       if (!DEV_PORTS.includes(port) && port < 3000) continue;
 
-      // Get full command
-      let command = processName;
-      try {
-        const { stdout: cmdOutput } = await execAsync(
-          `ps -p ${pid} -o command= 2>/dev/null || true`
-        );
-        command = cmdOutput.trim() || processName;
-      } catch {
-        // Fallback to process name
-      }
-
       ports.push({
         port,
         pid,
         protocol: protocol.includes('tcp') ? 'TCP' : 'UDP',
         processName,
-        command: command.substring(0, 100), // Limit length
+        command: processName, // full command resolved in one batch below
       });
+    }
+
+    // Resolve full commands in a single ps call instead of one per PID
+    if (ports.length > 0) {
+      const pids = [...new Set(ports.map(p => p.pid))].join(',');
+      try {
+        const { stdout: psOutput } = await execAsync(
+          `ps -p ${pids} -o pid=,command= 2>/dev/null || true`,
+          { maxBuffer: 1024 * 1024 }
+        );
+        const commands = new Map<number, string>();
+        for (const line of psOutput.split('\n')) {
+          const m = line.match(/^\s*(\d+)\s+(.*)$/);
+          if (m) commands.set(parseInt(m[1]), m[2].trim());
+        }
+        for (const p of ports) {
+          const cmd = commands.get(p.pid);
+          if (cmd) p.command = cmd.substring(0, 100); // Limit length
+        }
+      } catch {
+        // Fallback: process name already set
+      }
     }
   } catch (error) {
     console.error('[PortKiller] Failed to scan ports:', error);

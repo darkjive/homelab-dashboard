@@ -20,59 +20,14 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 
-// ============================================================
-// Types
-// ============================================================
-
-type RepoState =
-  | 'clean'
-  | 'dirty'
-  | 'ahead'
-  | 'behind'
-  | 'diverged'
-  | 'no-upstream'
-  | 'conflict'
-  | 'error';
-
-interface RepoSummary {
-  path: string;
-  name: string;
-  root: string;
-  branch: string;
-  state: RepoState;
-  ahead: number;
-  behind: number;
-  changedFiles: number;
-  stagedCount: number;
-  unstagedCount: number;
-  untrackedCount: number;
-  hasUpstream: boolean;
-  lastCommit?: {
-    hash: string;
-    message: string;
-    date: string;
-    author: string;
-  };
-  error?: string;
-}
-
-interface GitDetail {
-  isRepo: boolean;
-  branch: string;
-  ahead: number;
-  behind: number;
-  staged: string[];
-  unstaged: string[];
-  untracked: string[];
-  hasChanges: boolean;
-}
-
-interface BulkResultItem {
-  path: string;
-  name: string;
-  success: boolean;
-  message: string;
-}
+import type {
+  RepoState,
+  RepoSummary,
+  BulkResultItem,
+  GitStatus as GitDetail,
+} from '../../shared/types';
+import { useSettingJSON } from '../lib/settings';
+import { toast } from '../lib/toast';
 
 type FilterKey = 'all' | 'dirty' | 'ahead' | 'behind' | 'conflict';
 
@@ -80,24 +35,52 @@ type FilterKey = 'all' | 'dirty' | 'ahead' | 'behind' | 'conflict';
 // Helpers
 // ============================================================
 
-const STATE_META: Record<
-  RepoState,
-  { label: string; dot: string; text: string; border: string }
-> = {
-  clean: { label: 'clean', dot: 'bg-green-400', text: 'text-green-400', border: 'border-green-500/40' },
-  dirty: { label: 'dirty', dot: 'bg-yellow-400', text: 'text-yellow-400', border: 'border-yellow-500/40' },
-  ahead: { label: 'ahead', dot: 'bg-cyber-cyan', text: 'text-cyber-cyan', border: 'border-cyber-cyan/40' },
-  behind: { label: 'behind', dot: 'bg-orange-400', text: 'text-orange-400', border: 'border-orange-500/40' },
-  diverged: { label: 'diverged', dot: 'bg-purple-400', text: 'text-purple-400', border: 'border-purple-500/40' },
-  'no-upstream': {
-    label: 'no upstream',
-    dot: 'bg-gray-500',
-    text: 'text-gray-500',
-    border: 'border-gray-600/40',
-  },
-  conflict: { label: 'conflict', dot: 'bg-red-500', text: 'text-red-400', border: 'border-red-500/40' },
-  error: { label: 'error', dot: 'bg-red-700', text: 'text-red-500', border: 'border-red-700/40' },
-};
+const STATE_META: Record<RepoState, { label: string; dot: string; text: string; border: string }> =
+  {
+    clean: {
+      label: 'clean',
+      dot: 'bg-green-400',
+      text: 'text-green-400',
+      border: 'border-green-500/40',
+    },
+    dirty: {
+      label: 'dirty',
+      dot: 'bg-yellow-400',
+      text: 'text-yellow-400',
+      border: 'border-yellow-500/40',
+    },
+    ahead: {
+      label: 'ahead',
+      dot: 'bg-cyber-cyan',
+      text: 'text-cyber-cyan',
+      border: 'border-cyber-cyan/40',
+    },
+    behind: {
+      label: 'behind',
+      dot: 'bg-orange-400',
+      text: 'text-orange-400',
+      border: 'border-orange-500/40',
+    },
+    diverged: {
+      label: 'diverged',
+      dot: 'bg-purple-400',
+      text: 'text-purple-400',
+      border: 'border-purple-500/40',
+    },
+    'no-upstream': {
+      label: 'no upstream',
+      dot: 'bg-gray-500',
+      text: 'text-gray-500',
+      border: 'border-gray-600/40',
+    },
+    conflict: {
+      label: 'conflict',
+      dot: 'bg-red-500',
+      text: 'text-red-400',
+      border: 'border-red-500/40',
+    },
+    error: { label: 'error', dot: 'bg-red-700', text: 'text-red-500', border: 'border-red-700/40' },
+  };
 
 function matchesFilter(repo: RepoSummary, filter: FilterKey): boolean {
   switch (filter) {
@@ -128,33 +111,8 @@ function timeAgo(ts: number | null): string {
 // ============================================================
 
 export function GitStatus() {
-  // Roots configuration
-  const [roots, setRoots] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('git-roots');
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // ignore
-    }
-    return [];
-  });
-
-  // React to external settings changes (SettingsPanel)
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { key: string } | undefined;
-      if (!detail || detail.key === 'git-roots') {
-        try {
-          const saved = localStorage.getItem('git-roots');
-          setRoots(saved ? JSON.parse(saved) : []);
-        } catch {
-          setRoots([]);
-        }
-      }
-    };
-    window.addEventListener('homelab:settings-changed', handler);
-    return () => window.removeEventListener('homelab:settings-changed', handler);
-  }, []);
+  // Roots configuration — persisted + synced with SettingsPanel automatically
+  const [roots, setRoots] = useSettingJSON<string[]>('git-roots', []);
   const [showAddRoot, setShowAddRoot] = useState(false);
   const [newRoot, setNewRoot] = useState('');
 
@@ -188,11 +146,6 @@ export function GitStatus() {
     paths: string[];
     op: 'pull' | 'push' | 'fetch';
   } | null>(null);
-
-  // ---- persistence ----
-  useEffect(() => {
-    localStorage.setItem('git-roots', JSON.stringify(roots));
-  }, [roots]);
 
   // ---- scanning ----
   const scan = useCallback(async () => {
@@ -273,12 +226,14 @@ export function GitStatus() {
   const runRepoAction = async (path: string, op: 'pull' | 'push' | 'fetch') => {
     setActionLoading(prev => ({ ...prev, [path]: op }));
     try {
-      const res = await fetch(`/api/git/${op}?path=${encodeURIComponent(path)}`, { method: 'POST' });
+      const res = await fetch(`/api/git/${op}?path=${encodeURIComponent(path)}`, {
+        method: 'POST',
+      });
       const result = await res.json();
-      if (!result.success) alert(`${op} failed: ${result.message}`);
+      if (!result.success) toast(`${op} failed: ${result.message}`);
       await Promise.all([scan(), expanded === path ? loadDetail(path) : Promise.resolve()]);
     } catch {
-      alert(`${op} failed`);
+      toast(`${op} failed`);
     } finally {
       setActionLoading(prev => {
         const next = { ...prev };
@@ -299,14 +254,14 @@ export function GitStatus() {
       });
       const result = await res.json();
       if (!result.success) {
-        alert(`Commit failed: ${result.message}`);
+        toast(`Commit failed: ${result.message}`);
       } else {
         setCommitMsg('');
         setShowCommitInput(false);
       }
       await Promise.all([scan(), loadDetail(path)]);
     } catch {
-      alert('Commit failed');
+      toast('Commit failed');
     } finally {
       setActionLoading(prev => {
         const next = { ...prev };
@@ -346,11 +301,11 @@ export function GitStatus() {
       const failed = results.filter(r => !r.success);
       if (failed.length > 0) {
         const msg = failed.map(r => `• ${r.name}: ${r.message}`).join('\n');
-        alert(`Bulk ${op}: ${failed.length} failed\n\n${msg}`);
+        toast(`Bulk ${op}: ${failed.length} failed\n${msg}`);
       }
       await scan();
     } catch {
-      alert(`Bulk ${op} failed`);
+      toast(`Bulk ${op} failed`);
     } finally {
       setBulkLoading(null);
     }
@@ -359,7 +314,7 @@ export function GitStatus() {
   const openConfirm = (op: 'pull' | 'push' | 'fetch') => {
     const paths = bulkEligible();
     if (paths.length === 0) {
-      alert(`No eligible repos for bulk ${op}`);
+      toast(`No eligible repos for bulk ${op}`, 'info');
       return;
     }
     setConfirm({
@@ -376,7 +331,7 @@ export function GitStatus() {
       .filter(r => r.changedFiles > 0)
       .map(r => ({ path: r.path, message: bulkCommitMsg }));
     if (items.length === 0) {
-      alert('No repos with changes to commit');
+      toast('No repos with changes to commit', 'info');
       return;
     }
     setBulkLoading('commit');
@@ -390,15 +345,13 @@ export function GitStatus() {
       const data = await res.json();
       const failed = (data.results || []).filter((r: BulkResultItem) => !r.success);
       if (failed.length > 0) {
-        const msg = failed
-          .map((r: BulkResultItem) => `• ${r.name}: ${r.message}`)
-          .join('\n');
-        alert(`Bulk commit: ${failed.length} failed\n\n${msg}`);
+        const msg = failed.map((r: BulkResultItem) => `• ${r.name}: ${r.message}`).join('\n');
+        toast(`Bulk commit: ${failed.length} failed\n${msg}`);
       }
       setBulkCommitMsg('');
       await scan();
     } catch {
-      alert('Bulk commit failed');
+      toast('Bulk commit failed');
     } finally {
       setBulkLoading(null);
     }
@@ -426,9 +379,7 @@ export function GitStatus() {
       <div className="h-full flex flex-col items-center justify-center text-center p-4">
         <FolderGit2 className="w-10 h-12 text-cyber-cyan mb-3" />
         <h3 className="text-sm font-bold text-gray-200 mb-1">No Dev roots configured</h3>
-        <p className="text-xs text-gray-500 mb-4">
-          Add a directory to scan for git repositories.
-        </p>
+        <p className="text-xs text-gray-500 mb-4">Add a directory to scan for git repositories.</p>
         <div className="w-full max-w-sm">
           <input
             type="text"
@@ -463,12 +414,7 @@ export function GitStatus() {
             <span className="text-xs text-gray-600">·</span>
             <span className="text-xs text-gray-500">{timeAgo(lastScan)}</span>
           </div>
-          <button
-            onClick={scan}
-            disabled={scanning}
-            className="cyber-button p-1"
-            title="Rescan"
-          >
+          <button onClick={scan} disabled={scanning} className="cyber-button p-1" title="Rescan">
             <RefreshCw className={`w-3.5 h-3.5 ${scanning ? 'animate-spin' : ''}`} />
           </button>
         </div>
@@ -510,7 +456,10 @@ export function GitStatus() {
               className="flex-1 px-2 py-1 bg-cyber-darkbg border border-cyber-border text-gray-300 text-xs rounded font-mono"
               autoFocus
             />
-            <button onClick={addRoot} className="bg-cyber-cyan text-black px-3 py-1 rounded text-xs font-bold">
+            <button
+              onClick={addRoot}
+              className="bg-cyber-cyan text-black px-3 py-1 rounded text-xs font-bold"
+            >
               Add
             </button>
             <button
@@ -525,9 +474,7 @@ export function GitStatus() {
           </div>
         )}
 
-        {scanError && (
-          <div className="mt-2 text-xs text-red-400">Scan error: {scanError}</div>
-        )}
+        {scanError && <div className="mt-2 text-xs text-red-400">Scan error: {scanError}</div>}
       </div>
 
       {/* ---- Stat strip ---- */}
@@ -691,9 +638,7 @@ export function GitStatus() {
               {/* Expanded detail */}
               {isExpanded && (
                 <div className="px-3 pb-3 bg-cyber-darkbg/40">
-                  <div className="text-xs text-gray-600 font-mono mb-2 truncate">
-                    {repo.path}
-                  </div>
+                  <div className="text-xs text-gray-600 font-mono mb-2 truncate">{repo.path}</div>
 
                   {repo.state === 'conflict' && (
                     <div className="flex items-center gap-2 text-xs text-red-400 mb-2 p-2 border border-red-500/30 bg-red-900/10 rounded">
@@ -945,7 +890,9 @@ function FileGroup({
     <div className={`p-1.5 rounded border ${colorClass}`}>
       <div className="flex items-center gap-1 mb-0.5">
         {icon}
-        <span className="text-xs font-bold">{label} ({count})</span>
+        <span className="text-xs font-bold">
+          {label} ({count})
+        </span>
       </div>
       <div className="text-xs text-gray-400 font-mono space-y-0.5 max-h-16 overflow-y-auto">
         {files.slice(0, 8).map((f, i) => (

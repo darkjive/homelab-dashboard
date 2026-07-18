@@ -10,30 +10,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 
-interface VramGpu {
-  vendor: string;
-  model: string;
-  totalMb: number;
-  usedMb?: number;
-  percentage?: string;
-}
-
-interface VramData {
-  gpus: VramGpu[];
-  available: boolean;
-  dynamic: boolean;
-  reason?: string;
-}
-
-interface MetricsData {
-  cpu: { usage: string; cores: { usage: string }[] };
-  memory: { total: number; used: number; free: number; percentage: string };
-  disk: { fs: string; mount: string; size: number; used: number; percentage: number }[];
-  temperature: { main: number; max: number; cores: number[]; available: boolean; reason?: string };
-  vram?: VramData;
-  platform?: string;
-  timestamp: number;
-}
+import type { MetricsData } from '../../shared/types';
 
 interface HistoricalData {
   time: string;
@@ -108,8 +85,11 @@ export function SystemMetrics() {
 
       try {
         setConnectionStatus('connecting');
-        // Connect directly to backend WebSocket (Vite proxy doesn't work reliably for WS)
-        const wsUrl = 'ws://localhost:3010/ws';
+        // Same-origin WebSocket: the Vite dev server proxies /ws to the
+        // backend; in prod the backend serves the bundle itself. Deriving the
+        // URL from location keeps LAN access (BIND_HOST) working.
+        const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        const wsUrl = `${wsProto}://${window.location.host}/ws`;
         console.log('[SystemMetrics] Connecting to:', wsUrl);
         const ws = new WebSocket(wsUrl);
         wsRef.current = ws;

@@ -1,23 +1,13 @@
-import { chromium, Browser, Page } from 'playwright';
+import { chromium, type Browser, type Page } from 'playwright';
 import * as cheerio from 'cheerio';
 import TurndownService from 'turndown';
+import { isPrivateHost, isPrivateOrLoopbackHost } from './netGuard.js';
+import type { ScrapeResult } from '../../shared/types.js';
 
 interface ScrapeOptions {
   url: string;
   depth: number;
   maxPages?: number;
-}
-
-interface ScrapeResult {
-  url: string;
-  title: string;
-  markdown: string;
-  metadata: {
-    depth: number;
-    pagesScraped: number;
-    timestamp: string;
-    links: string[];
-  };
 }
 
 const turndownService = new TurndownService({
@@ -71,7 +61,18 @@ async function scrapePage(
   page: Page,
   url: string
 ): Promise<{ title: string; html: string; links: string[] }> {
+  // SSRF guard: check the target (incl. DNS resolution) before navigating…
+  if (await isPrivateHost(new URL(url).hostname)) {
+    throw new Error(`Refusing to scrape private/internal host: ${url}`);
+  }
+
   await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+
+  // …and the final URL after redirects, so a public page can't bounce us into
+  // the internal network.
+  if (isPrivateOrLoopbackHost(new URL(page.url()).hostname)) {
+    throw new Error(`Redirect to private/internal host blocked: ${page.url()}`);
+  }
 
   const title = await page.title();
   const html = await page.content();

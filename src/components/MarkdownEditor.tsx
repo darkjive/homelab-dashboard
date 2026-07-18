@@ -85,7 +85,13 @@ export function MarkdownEditor() {
 
   // Simple markdown to HTML converter (basic implementation)
   const renderMarkdown = (md: string) => {
-    let html = md;
+    // Escape raw HTML first — the result goes into dangerouslySetInnerHTML,
+    // so unescaped input (e.g. pasted <img onerror=…>) would execute.
+    let html = md
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
 
     // Headers
     html = html.replace(
@@ -122,10 +128,12 @@ export function MarkdownEditor() {
       '<code class="bg-cyber-darkbg px-1 py-0.5 rounded text-sm font-mono text-green-300">$1</code>'
     );
 
-    // Links
-    html = html.replace(
-      /\[(.*?)\]\((.*?)\)/gim,
-      '<a href="$2" target="_blank" class="text-cyber-cyan hover:text-cyber-orange underline">$1</a>'
+    // Links — only http(s) targets; anything else (javascript:, data:, …)
+    // renders as plain text instead of a clickable link
+    html = html.replace(/\[(.*?)\]\((.*?)\)/gim, (match, text: string, href: string) =>
+      /^https?:\/\//i.test(href)
+        ? `<a href="${href}" target="_blank" rel="noopener noreferrer" class="text-cyber-cyan hover:text-cyber-orange underline">${text}</a>`
+        : match
     );
 
     // Lists
@@ -144,9 +152,6 @@ export function MarkdownEditor() {
         <div className="flex items-center gap-2">
           <FileText className="w-5 h-5 text-cyber-cyan" />
           <h3 className="text-lg font-bold cyber-glow">MARKDOWN EDITOR</h3>
-          <span className="text-xs bg-cyber-orange/20 text-cyber-orange border border-cyber-orange/40 px-2 py-0.5 rounded font-mono font-bold">
-            DEMO
-          </span>
         </div>
         <div className="flex items-center gap-2">
           {/* Input Mode Toggle */}

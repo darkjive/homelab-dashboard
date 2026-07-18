@@ -24,7 +24,7 @@ export function ServiceStatus() {
 
   const fetchStatus = async () => {
     try {
-      const res = await fetch('http://localhost:3010/api/service-status');
+      const res = await fetch('/api/service-status');
       if (!res.ok) return;
       const data = await res.json();
       setServices(data.services);

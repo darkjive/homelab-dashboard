@@ -14,7 +14,7 @@ export function NetworkOutageMap() {
 
   const fetchConnectivity = async () => {
     try {
-      const res = await fetch('http://localhost:3010/api/connectivity');
+      const res = await fetch('/api/connectivity');
       if (!res.ok) return;
       const data = await res.json();
       setChecks(data.checks);

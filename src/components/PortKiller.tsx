@@ -1,23 +1,17 @@
 import { useState, useEffect } from 'react';
 import { Zap, RefreshCw, Skull, Server, AlertTriangle } from 'lucide-react';
-
-interface PortInfo {
-  port: number;
-  pid: number;
-  protocol: string;
-  processName: string;
-  command: string;
-}
+import type { DevPortInfo } from '../../shared/types';
+import { toast } from '../lib/toast';
 
 export function PortKiller() {
-  const [ports, setPorts] = useState<PortInfo[]>([]);
+  const [ports, setPorts] = useState<DevPortInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [killing, setKilling] = useState<number | null>(null);
   const [lastKilled, setLastKilled] = useState<number | null>(null);
 
   const fetchPorts = async () => {
     try {
-      const res = await fetch('http://localhost:3010/api/ports');
+      const res = await fetch('/api/ports');
       const data = await res.json();
       setPorts(data.ports || []);
       setLoading(false);
@@ -30,7 +24,7 @@ export function PortKiller() {
   const killPort = async (port: number) => {
     setKilling(port);
     try {
-      const res = await fetch('http://localhost:3010/api/ports/kill', {
+      const res = await fetch('/api/ports/kill', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ port }),
@@ -44,11 +38,11 @@ export function PortKiller() {
         // Refresh ports after kill
         await fetchPorts();
       } else {
-        alert(`Failed to kill port ${port}: ${result.message}`);
+        toast(`Failed to kill port ${port}: ${result.message}`);
       }
     } catch (error) {
       console.error('Failed to kill port:', error);
-      alert(`Error killing port ${port}`);
+      toast(`Error killing port ${port}`);
     } finally {
       setKilling(null);
     }

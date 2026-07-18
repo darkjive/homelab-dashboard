@@ -13,27 +13,9 @@ import {
   Sparkles,
 } from 'lucide-react';
 
-interface LogFile {
-  id: string;
-  name: string;
-  path: string;
-  color: string;
-}
-
-interface LogLine {
-  id: string;
-  timestamp: string;
-  source: string;
-  level: 'ERROR' | 'WARN' | 'INFO' | 'DEBUG' | 'UNKNOWN';
-  message: string;
-  color: string;
-}
-
-interface LogSuggestion {
-  category: 'System' | 'Services' | 'Dev' | 'AI Agents';
-  name: string;
-  path: string;
-}
+import type { LogFile, LogLine, LogSuggestion } from '../../shared/types';
+import { useSettingJSON } from '../lib/settings';
+import { toast } from '../lib/toast';
 
 export function LogAggregator() {
   const [activeTails, setActiveTails] = useState<LogFile[]>([]);
@@ -53,41 +35,14 @@ export function LogAggregator() {
   const [suggestions, setSuggestions] = useState<LogSuggestion[]>([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
 
-  // Saved log configs
-  const [savedLogs, setSavedLogs] = useState<Omit<LogFile, 'color'>[]>(() => {
-    try {
-      const saved = localStorage.getItem('log-configs');
-      if (saved) {
-        return JSON.parse(saved);
-      }
-    } catch {
-      // Fallback
-    }
-    return [];
-  });
-
-  // React to external settings changes (SettingsPanel)
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { key: string } | undefined;
-      if (!detail || detail.key === 'log-configs') {
-        try {
-          const saved = localStorage.getItem('log-configs');
-          setSavedLogs(saved ? JSON.parse(saved) : []);
-        } catch {
-          setSavedLogs([]);
-        }
-      }
-    };
-    window.addEventListener('homelab:settings-changed', handler);
-    return () => window.removeEventListener('homelab:settings-changed', handler);
-  }, []);
+  // Saved log configs — persisted + synced with SettingsPanel automatically
+  const [savedLogs, setSavedLogs] = useSettingJSON<Omit<LogFile, 'color'>[]>('log-configs', []);
 
   const logContainerRef = useRef<HTMLDivElement>(null);
 
   const fetchActiveTails = async () => {
     try {
-      const res = await fetch('http://localhost:3010/api/logs/active');
+      const res = await fetch('/api/logs/active');
       const data = await res.json();
       setActiveTails(data.tails || []);
     } catch (error) {
@@ -97,7 +52,7 @@ export function LogAggregator() {
 
   const fetchLogLines = async () => {
     try {
-      const res = await fetch('http://localhost:3010/api/logs/lines');
+      const res = await fetch('/api/logs/lines');
       const data = await res.json();
       setLogLines(data.lines || []);
     } catch (error) {
@@ -107,7 +62,7 @@ export function LogAggregator() {
 
   const startTailing = async (log: Omit<LogFile, 'color'>) => {
     try {
-      const res = await fetch('http://localhost:3010/api/logs/tail', {
+      const res = await fetch('/api/logs/tail', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -121,17 +76,17 @@ export function LogAggregator() {
       if (result.success) {
         await fetchActiveTails();
       } else {
-        alert(`Failed to start tailing: ${result.message}`);
+        toast(`Failed to start tailing: ${result.message}`);
       }
     } catch (error) {
       console.error('Failed to start tailing:', error);
-      alert('Failed to start tailing');
+      toast('Failed to start tailing');
     }
   };
 
   const stopTailing = async (fileId: string) => {
     try {
-      await fetch('http://localhost:3010/api/logs/stop', {
+      await fetch('/api/logs/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fileId }),
@@ -145,7 +100,7 @@ export function LogAggregator() {
 
   const clearLogs = async () => {
     try {
-      await fetch('http://localhost:3010/api/logs/clear', {
+      await fetch('/api/logs/clear', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
@@ -159,7 +114,7 @@ export function LogAggregator() {
 
   const addLog = () => {
     if (!newLogName.trim() || !newLogPath.trim()) {
-      alert('Both name and path are required');
+      toast('Both name and path are required', 'info');
       return;
     }
 
@@ -169,9 +124,7 @@ export function LogAggregator() {
       path: newLogPath.trim(),
     };
 
-    const updated = [...savedLogs, newLog];
-    setSavedLogs(updated);
-    localStorage.setItem('log-configs', JSON.stringify(updated));
+    setSavedLogs([...savedLogs, newLog]);
 
     // Auto-start tailing
     startTailing(newLog);
@@ -182,9 +135,7 @@ export function LogAggregator() {
   };
 
   const removeLog = (logId: string) => {
-    const updated = savedLogs.filter(l => l.id !== logId);
-    setSavedLogs(updated);
-    localStorage.setItem('log-configs', JSON.stringify(updated));
+    setSavedLogs(savedLogs.filter(l => l.id !== logId));
 
     // Stop tailing if active
     if (activeTails.find(t => t.id === logId)) {
@@ -233,9 +184,6 @@ export function LogAggregator() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    // Date.now() is fine here — this runs in a click handler, not during render.
-    // The lint rule can't tell; opting out explicitly.
-    // eslint-disable-next-line react-hooks/purity
     a.download = `logs-${Date.now()}.txt`;
     a.click();
     URL.revokeObjectURL(url);
@@ -500,7 +448,9 @@ export function LogAggregator() {
                               className="w-full text-left px-3 py-2 bg-cyber-cardbg border border-cyber-border rounded hover:border-cyber-cyan transition-colors"
                             >
                               <div className="text-sm text-gray-200 font-mono">{s.name}</div>
-                              <div className="text-xs text-gray-500 font-mono truncate">{s.path}</div>
+                              <div className="text-xs text-gray-500 font-mono truncate">
+                                {s.path}
+                              </div>
                             </button>
                           ))}
                         </div>
@@ -511,10 +461,7 @@ export function LogAggregator() {
               )}
             </div>
             <div className="p-4 border-t border-cyber-border flex justify-end">
-              <button
-                onClick={() => setShowSuggestions(false)}
-                className="cyber-button px-4 py-2"
-              >
+              <button onClick={() => setShowSuggestions(false)} className="cyber-button px-4 py-2">
                 Close
               </button>
             </div>

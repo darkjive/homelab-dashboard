@@ -31,3 +31,7 @@ public/audio/*.wav
 *.njsproj
 *.sln
 *.sw?
+
+# Lokale Agent-/Tool-Artefakte
+.playwright-mcp/
+dashboard-smoke.png

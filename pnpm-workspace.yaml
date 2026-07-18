@@ -1,2 +1,6 @@
-allowBuilds:
-  esbuild: true
+# Allowlist of packages whose install scripts may run (pnpm 10 blocks all by
+# default). electron's postinstall downloads the platform binary — without it,
+# desktop mode fails with "Electron failed to install correctly".
+onlyBuiltDependencies:
+  - electron
+  - esbuild

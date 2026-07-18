@@ -11,21 +11,13 @@ import {
   AlertCircle,
 } from 'lucide-react';
 
-interface PackageScripts {
-  scripts: Record<string, string>;
-  projectName: string;
-  packageManager: 'npm' | 'pnpm' | 'yarn' | 'bun';
-}
+import type { PackageScripts, ScriptOutput } from '../../shared/types';
+import { useSetting, useSettingJSON } from '../lib/settings';
+import { toast } from '../lib/toast';
 
 interface SavedProject {
   name: string;
   path: string;
-}
-
-interface ScriptOutput {
-  output: string;
-  exitCode: number | null;
-  isRunning: boolean;
 }
 
 export function NpmScriptRunner() {
@@ -36,62 +28,13 @@ export function NpmScriptRunner() {
   const [scriptOutput, setScriptOutput] = useState<string>('');
   const [showOutput, setShowOutput] = useState(false);
 
-  // Project management (same as Git widget)
-  const [savedProjects, setSavedProjects] = useState<SavedProject[]>(() => {
-    try {
-      const saved = localStorage.getItem('npm-projects');
-      if (saved) {
-        return JSON.parse(saved);
-      }
-    } catch {
-      // Fallback
-    }
-    return [];
-  });
-
-  const [currentProjectPath, setCurrentProjectPath] = useState<string>(() => {
-    return localStorage.getItem('npm-current-project') || '';
-  });
+  // Project management — persisted + synced with SettingsPanel automatically
+  const [savedProjects, setSavedProjects] = useSettingJSON<SavedProject[]>('npm-projects', []);
+  const [currentProjectPath, setCurrentProjectPath] = useSetting('npm-current-project', '');
 
   // Git-root-sourced projects: scanned via /api/git/scan, shown alongside manual ones
-  const [gitRoots, setGitRoots] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('git-roots');
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // ignore
-    }
-    return [];
-  });
+  const [gitRoots] = useSettingJSON<string[]>('git-roots', []);
   const [gitRepos, setGitRepos] = useState<SavedProject[]>([]);
-
-  // React to external settings changes (SettingsPanel)
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { key: string } | undefined;
-      if (!detail || detail.key === 'npm-projects') {
-        try {
-          const saved = localStorage.getItem('npm-projects');
-          setSavedProjects(saved ? JSON.parse(saved) : []);
-        } catch {
-          setSavedProjects([]);
-        }
-      }
-      if (!detail || detail.key === 'npm-current-project') {
-        setCurrentProjectPath(localStorage.getItem('npm-current-project') || '');
-      }
-      if (!detail || detail.key === 'git-roots') {
-        try {
-          const saved = localStorage.getItem('git-roots');
-          setGitRoots(saved ? JSON.parse(saved) : []);
-        } catch {
-          setGitRoots([]);
-        }
-      }
-    };
-    window.addEventListener('homelab:settings-changed', handler);
-    return () => window.removeEventListener('homelab:settings-changed', handler);
-  }, []);
 
   // Scan git-roots whenever they change; surface repos as selectable projects
   useEffect(() => {
@@ -110,7 +53,7 @@ export function NpmScriptRunner() {
         const data = await res.json();
         if (cancelled) return;
         const repos: SavedProject[] = (data.repos || []).map(
-          (r: { name: string; path: string }) => ({ name: r.name, path: r.path }),
+          (r: { name: string; path: string }) => ({ name: r.name, path: r.path })
         );
         setGitRepos(repos);
       } catch (err) {
@@ -142,9 +85,7 @@ export function NpmScriptRunner() {
   const fetchScripts = async (projectPath?: string) => {
     const path = projectPath || currentProjectPath;
     try {
-      const url = path
-        ? `http://localhost:3010/api/npm/scripts?path=${encodeURIComponent(path)}`
-        : 'http://localhost:3010/api/npm/scripts';
+      const url = path ? `/api/npm/scripts?path=${encodeURIComponent(path)}` : '/api/npm/scripts';
 
       const res = await fetch(url);
       const data = await res.json();
@@ -158,7 +99,7 @@ export function NpmScriptRunner() {
 
   const runScript = async (scriptName: string) => {
     try {
-      const res = await fetch('http://localhost:3010/api/npm/run', {
+      const res = await fetch('/api/npm/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -170,14 +111,15 @@ export function NpmScriptRunner() {
 
       const result = await res.json();
       if (result.processId) {
+        // Polling starts via the effect below once runningScripts updates —
+        // starting it here too would leak a second uncancelled interval.
         setRunningScripts(prev => new Map(prev).set(scriptName, result.processId));
         setSelectedScript(scriptName);
         setShowOutput(true);
-        pollOutput(result.processId);
       }
     } catch (error) {
       console.error('Failed to run script:', error);
-      alert(`Failed to run ${scriptName}`);
+      toast(`Failed to run ${scriptName}`);
     }
   };
 
@@ -186,7 +128,7 @@ export function NpmScriptRunner() {
     if (!processId) return;
 
     try {
-      await fetch('http://localhost:3010/api/npm/stop', {
+      await fetch('/api/npm/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ processId }),
@@ -205,7 +147,7 @@ export function NpmScriptRunner() {
   const pollOutput = (processId: string) => {
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`http://localhost:3010/api/npm/output/${processId}`);
+        const res = await fetch(`/api/npm/output/${processId}`);
         const data: ScriptOutput = await res.json();
 
         setScriptOutput(data.output);
@@ -224,17 +166,13 @@ export function NpmScriptRunner() {
 
   const addProject = () => {
     if (!newProjectName.trim() || !newProjectPath.trim()) {
-      alert('Both name and path are required');
+      toast('Both name and path are required', 'info');
       return;
     }
 
     const newProject = { name: newProjectName.trim(), path: newProjectPath.trim() };
-    const updated = [...savedProjects, newProject];
-    setSavedProjects(updated);
-    localStorage.setItem('npm-projects', JSON.stringify(updated));
-
+    setSavedProjects([...savedProjects, newProject]);
     setCurrentProjectPath(newProject.path);
-    localStorage.setItem('npm-current-project', newProject.path);
 
     setNewProjectName('');
     setNewProjectPath('');
@@ -245,19 +183,16 @@ export function NpmScriptRunner() {
   const removeProject = (path: string) => {
     const updated = savedProjects.filter(p => p.path !== path);
     setSavedProjects(updated);
-    localStorage.setItem('npm-projects', JSON.stringify(updated));
 
     if (currentProjectPath === path) {
       const newPath = updated.length > 0 ? updated[0].path : '';
       setCurrentProjectPath(newPath);
-      localStorage.setItem('npm-current-project', newPath);
       fetchScripts(newPath);
     }
   };
 
   const switchProject = (path: string) => {
     setCurrentProjectPath(path);
-    localStorage.setItem('npm-current-project', path);
     setRunningScripts(new Map()); // Clear running scripts
     setShowOutput(false);
     fetchScripts(path);
@@ -291,9 +226,8 @@ export function NpmScriptRunner() {
   }
 
   const currentProject = mergedProjects.find(p => p.path === currentProjectPath);
-  const isGitRootProject = (
-    path: string | undefined,
-  ): boolean => !!path && gitRepos.some(r => r.path === path) && !savedProjects.some(p => p.path === path);
+  const isGitRootProject = (path: string | undefined): boolean =>
+    !!path && gitRepos.some(r => r.path === path) && !savedProjects.some(p => p.path === path);
 
   return (
     <div className="h-full overflow-y-auto">

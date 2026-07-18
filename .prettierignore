@@ -2,6 +2,9 @@ node_modules
 dist
 build
 coverage
+# vendored agent skill files — not ours to reformat
+.agents
+.claude
 .vite
 *.min.js
 *.min.css

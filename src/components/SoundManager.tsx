@@ -1,20 +1,25 @@
 import { useState, useEffect, useRef } from 'react';
 import { Volume2, VolumeX } from 'lucide-react';
+import { useSetting } from '../lib/settings';
+
+// The ambiance file is intentionally not checked into the repo (see
+// .gitignore) — drop any .ogg at public/audio/ambiance-legal.ogg to enable
+// playback. Without it the widget shows a muted, disabled state.
+const AUDIO_SRC = '/audio/ambiance-legal.ogg';
 
 export function SoundManager() {
-  const [soundEnabled, setSoundEnabled] = useState(() => {
-    const saved = localStorage.getItem('sound-enabled');
-    return saved !== 'false';
-  });
-  const [volume, setVolume] = useState(() => {
-    const saved = localStorage.getItem('sound-volume');
-    return saved ? parseFloat(saved) : 0.3;
-  });
+  // Persisted + synced with SettingsPanel automatically
+  const [soundEnabledRaw, setSoundEnabledRaw] = useSetting('sound-enabled', 'true');
+  const [volumeRaw, setVolumeRaw] = useSetting('sound-volume', '0.3');
+  const [audioAvailable, setAudioAvailable] = useState(true);
+
+  const soundEnabled = soundEnabledRaw !== 'false';
+  const volume = parseFloat(volumeRaw) || 0.3;
 
   const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
-    if (audioRef.current) {
+    if (audioRef.current && audioAvailable) {
       audioRef.current.volume = volume;
 
       if (soundEnabled) {
@@ -25,41 +30,36 @@ export function SoundManager() {
         audioRef.current.pause();
       }
     }
-  }, [soundEnabled, volume]);
-
-  // React to external settings changes (SettingsPanel)
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { key: string } | undefined;
-      if (!detail || detail.key === 'sound-enabled') {
-        setSoundEnabled(localStorage.getItem('sound-enabled') !== 'false');
-      }
-      if (!detail || detail.key === 'sound-volume') {
-        const v = localStorage.getItem('sound-volume');
-        setVolume(v ? parseFloat(v) : 0.3);
-      }
-    };
-    window.addEventListener('homelab:settings-changed', handler);
-    return () => window.removeEventListener('homelab:settings-changed', handler);
-  }, []);
+  }, [soundEnabled, volume, audioAvailable]);
 
   const toggleSound = () => {
-    const newState = !soundEnabled;
-    setSoundEnabled(newState);
-    localStorage.setItem('sound-enabled', String(newState));
+    setSoundEnabledRaw(String(!soundEnabled));
   };
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newVolume = parseFloat(e.target.value);
-    setVolume(newVolume);
-    localStorage.setItem('sound-volume', String(newVolume));
+    setVolumeRaw(e.target.value);
   };
+
+  if (!audioAvailable) {
+    return (
+      <div
+        className="p-2 text-gray-600"
+        title={`Ambiance audio missing — add a file at public${AUDIO_SRC}`}
+      >
+        <VolumeX className="w-5 h-5" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-center gap-3">
-      <audio ref={audioRef} loop preload="auto">
-        <source src="/audio/ambiance-legal.ogg" type="audio/ogg" />
-      </audio>
+      <audio
+        ref={audioRef}
+        src={AUDIO_SRC}
+        loop
+        preload="auto"
+        onError={() => setAudioAvailable(false)}
+      />
 
       <button
         onClick={toggleSound}

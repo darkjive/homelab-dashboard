@@ -1,21 +1,28 @@
 import { useState, useEffect } from 'react';
-import { X, Plus, Trash2, Volume2, Cloud, Bot, Github, GitBranch, Package, FileText, Rss, Link as LinkIcon, Settings as SettingsIcon } from 'lucide-react';
+import {
+  X,
+  Plus,
+  Trash2,
+  Volume2,
+  Cloud,
+  Bot,
+  Github,
+  GitBranch,
+  Package,
+  FileText,
+  Rss,
+  Link as LinkIcon,
+  Settings as SettingsIcon,
+} from 'lucide-react';
 import { getSetting, getSettingJSON, setSetting, setSettingRaw } from '../lib/settings';
+import type { QuickLink } from './QuickLinks';
 
 interface SettingsPanelProps {
   open: boolean;
   onClose: () => void;
 }
 
-type SectionId =
-  | 'general'
-  | 'sound'
-  | 'chatbot'
-  | 'git'
-  | 'npm'
-  | 'logs'
-  | 'rss'
-  | 'links';
+type SectionId = 'general' | 'sound' | 'chatbot' | 'git' | 'npm' | 'logs' | 'rss' | 'links';
 
 const SECTIONS: Array<{ id: SectionId; label: string; icon: typeof X }> = [
   { id: 'general', label: 'General', icon: SettingsIcon },
@@ -136,9 +143,7 @@ const inputClass =
 // ============================================================
 
 function GeneralSection() {
-  const [githubUsername, setGithubUsername] = useState(() =>
-    getSetting('github-username', 'darkjive')
-  );
+  const [githubUsername, setGithubUsername] = useState(() => getSetting('github-username', ''));
   const [weatherLocation, setWeatherLocation] = useState(() =>
     getSetting('weather-location', 'Munich')
   );
@@ -154,10 +159,10 @@ function GeneralSection() {
             type="text"
             value={githubUsername}
             onChange={e => setGithubUsername(e.target.value)}
-            onBlur={() => setSettingRaw('github-username', githubUsername.trim() || 'darkjive')}
+            onBlur={() => setSettingRaw('github-username', githubUsername.trim())}
             onKeyDown={e => {
               if (e.key === 'Enter') {
-                setSettingRaw('github-username', githubUsername.trim() || 'darkjive');
+                setSettingRaw('github-username', githubUsername.trim());
               }
             }}
             placeholder="e.g. torvalds"
@@ -319,8 +324,7 @@ function ListEditor<T>({
 
   const add = () => persist([...items, buildNew()]);
   const remove = (idx: number) => persist(items.filter((_, i) => i !== idx));
-  const replace = (idx: number, next: T) =>
-    persist(items.map((it, i) => (i === idx ? next : it)));
+  const replace = (idx: number, next: T) => persist(items.map((it, i) => (i === idx ? next : it)));
 
   return (
     <div className="space-y-2">
@@ -336,7 +340,11 @@ function ListEditor<T>({
           className="flex items-start gap-2 p-2 bg-cyber-darkbg border border-cyber-border rounded"
         >
           <div className="flex-1">
-            {renderItem(item, next => replace(idx, next), () => remove(idx))}
+            {renderItem(
+              item,
+              next => replace(idx, next),
+              () => remove(idx)
+            )}
           </div>
           <button
             onClick={() => remove(idx)}
@@ -530,16 +538,6 @@ function RssSection() {
 // Quick Links (simplified editor)
 // ============================================================
 
-interface QuickLink {
-  name: string;
-  url: string;
-  iconType: 'lucide' | 'brand' | 'custom';
-  iconName: string;
-  brandId?: string;
-  customLogoUrl?: string;
-  color?: string;
-}
-
 function LinksSection() {
   return (
     <div className="space-y-4 max-w-2xl">
@@ -553,6 +551,8 @@ function LinksSection() {
         emptyLabel="No quick links configured."
         addLabel="Add link"
         buildNew={() => ({
+          // id is required — QuickLinks discards the whole list if any entry lacks it
+          id: `link-${Date.now()}`,
           name: '',
           url: '',
           iconType: 'lucide',

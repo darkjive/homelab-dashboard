@@ -49,6 +49,9 @@ import {
 import { getDockerInfo } from './services/docker.js';
 import { getUFWStatus, getUFWLogs, getTopAttackers } from './services/ufw.js';
 import { getPortScan, getPortScannerStatus } from './services/ports.js';
+import { isPrivateHost } from './services/netGuard.js';
+import type { LogFile } from '../shared/types.js';
+import type { IncomingMessage } from 'http';
 
 // Sensitive system paths that must never be touched by git operations
 const BLOCKED_PATH_PREFIXES = ['/proc', '/sys', '/dev', '/boot', '/etc', '/root', '/var/log'];
@@ -68,67 +71,57 @@ function validateGitPath(userPath: string): string {
   return resolvedPath;
 }
 
-/**
- * SSRF guard: returns true for hostnames that resolve to or are private /
- * loopback / link-local / CGNAT addresses. Prevents the scraper from being
- * used to probe internal services. Handles IPv4, IPv6 (incl. ::1, fc00::/7,
- * fe80::/10), and the literal "localhost" name.
- */
-function isPrivateOrLoopbackHost(hostname: string): boolean {
-  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase();
-  if (host === 'localhost' || host.endsWith('.localhost')) return true;
-  if (host === '::1' || host === '::' || host === '::ffff:127.0.0.1') return true;
-
-  // IPv4 dotted-quad — strip any IPv4-in-IPv6 prefix
-  const v4 = host.startsWith('::ffff:') ? host.slice(7) : host;
-  const m = v4.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (m) {
-    const [a, b] = [parseInt(m[1]), parseInt(m[2])].map(octet => {
-      if (octet > 255) return NaN;
-      return octet;
-    });
-    if (a === 10) return true; // 10.0.0.0/8
-    if (a === 127) return true; // 127.0.0.0/8 (loopback)
-    if (a === 0) return true; // 0.0.0.0/8
-    if (a === 169 && b === 254) return true; // 169.254.0.0/16 (link-local)
-    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
-    if (a === 192 && b === 168) return true; // 192.168.0.0/16
-    if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 (CGNAT)
-  }
-
-  // IPv6 private/link-local (only simple forms — does not normalize)
-  if (host.startsWith('fc') || host.startsWith('fd')) return true; // fc00::/7 ULA
-  if (host.startsWith('fe80:') || host.startsWith('fe90:') || host.startsWith('fea0:') || host.startsWith('feb0:'))
-    return true; // fe80::/10 link-local
-
-  return false;
-}
-
 const app = express();
-const PORT = 3010;
+const PORT = parseInt(process.env.PORT || '3010', 10);
 // Bind to loopback by default. Set BIND_HOST=0.0.0.0 to expose on the LAN —
 // make sure you understand the consequences (no auth on any endpoint).
 const HOST = process.env.BIND_HOST || '127.0.0.1';
 const OLLAMA_BASE_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 const server = createServer(app);
 
-// WebSocket server with proper configuration
+// WebSocket server with proper configuration.
+// Origin check is port-agnostic: any loopback origin is fine (Vite picks the
+// next free port when 5173 is taken), while foreign web origins — the actual
+// threat, e.g. a malicious site opening a WS to the local daemon — stay blocked.
 const wss = new WebSocketServer({
   server,
   path: '/ws',
-  // Allow connections from Vite dev server and production
-  verifyClient: info => {
+  verifyClient: (info: { origin?: string; req: IncomingMessage }) => {
     const origin = info.origin || info.req.headers.origin;
-    const allowedOrigins = [
-      'http://localhost:5173',
-      'http://localhost:4173',
-      'http://127.0.0.1:5173',
-      'http://localhost:3010', // Allow direct connections too
-    ];
-    return !origin || allowedOrigins.some(allowed => origin?.startsWith(allowed));
+    if (!origin) return true; // non-browser clients (curl, health checks)
+    try {
+      const { hostname } = new URL(origin);
+      return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(hostname);
+    } catch {
+      return false;
+    }
   },
 });
 
+// DNS-rebinding guard: a malicious website can point its own DNS at 127.0.0.1
+// and reach this server "same-origin", bypassing CORS entirely. The Host
+// header still names the attacker's domain, so an allowlist stops it. Skipped
+// when the server is deliberately exposed via BIND_HOST (LAN IPs vary).
+const ALLOWED_HOSTS = new Set([
+  `localhost:${PORT}`,
+  `127.0.0.1:${PORT}`,
+  `[::1]:${PORT}`,
+  'localhost',
+  '127.0.0.1',
+]);
+const isLoopbackBind = HOST === '127.0.0.1' || HOST === 'localhost' || HOST === '::1';
+app.use((req, res, next) => {
+  if (!isLoopbackBind) return next();
+  const host = req.headers.host?.toLowerCase();
+  if (host && !ALLOWED_HOSTS.has(host)) {
+    return res.status(403).json({ error: `Forbidden Host header: ${host}` });
+  }
+  next();
+});
+
+// CSP applies to the served frontend bundle (Electron prod / single-origin
+// mode). connectSrc must list every API the widgets call directly from the
+// browser — anything missing here is silently blocked in production.
 app.use(
   helmet({
     contentSecurityPolicy: {
@@ -136,8 +129,15 @@ app.use(
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'", "'unsafe-inline'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", 'data:', 'https:', 'http:'],
-        connectSrc: ["'self'", 'http://localhost:3010', 'https://wttr.in'],
+        imgSrc: ["'self'", 'data:', 'https:'], // GitHub avatars, simpleicons CDN
+        connectSrc: [
+          "'self'",
+          `ws://localhost:${PORT}`, // metrics WebSocket
+          'https://api.github.com', // GitHubStats
+          'https://hacker-news.firebaseio.com', // HackerNewsFeed
+          'https://api.rss2json.com', // RSSFeed CORS proxy
+        ],
+        mediaSrc: ["'self'"], // SoundManager ambiance
       },
     },
   })
@@ -152,15 +152,12 @@ app.use(
 
 app.use(express.json({ limit: '1mb' }));
 
-// Disable rate limiting in development, use generous limits in production
+// Generous limit that never bites the dashboard's own polling, but caps
+// runaway clients. No localhost exemption — with the default loopback bind
+// every request is localhost, which would disable limiting entirely.
 const generalLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute window
   max: 1000, // 1000 requests per minute
-  skip: req => {
-    // Skip rate limiting for localhost in development
-    const isLocalhost = req.ip === '127.0.0.1' || req.ip === '::1' || req.ip?.includes('localhost');
-    return isLocalhost || process.env.NODE_ENV === 'development';
-  },
   message: { error: 'Too many requests, please try again later' },
 });
 
@@ -176,7 +173,7 @@ const ollamaLimiter = rateLimit({
   message: { error: 'Ollama rate limit exceeded' },
 });
 
-app.get('/api/metrics', generalLimiter, async (req, res) => {
+app.get('/api/metrics', generalLimiter, async (_req, res) => {
   try {
     const metrics = await getSystemMetrics();
     res.json(metrics);
@@ -186,7 +183,7 @@ app.get('/api/metrics', generalLimiter, async (req, res) => {
   }
 });
 
-app.get('/api/weather', async (req, res) => {
+app.get('/api/weather', generalLimiter, async (req, res) => {
   try {
     const locationSchema = z
       .string()
@@ -206,7 +203,7 @@ app.get('/api/weather', async (req, res) => {
   }
 });
 
-app.get('/api/docker', generalLimiter, async (req, res) => {
+app.get('/api/docker', generalLimiter, async (_req, res) => {
   try {
     const dockerInfo = await getDockerInfo();
     res.json(dockerInfo);
@@ -217,7 +214,7 @@ app.get('/api/docker', generalLimiter, async (req, res) => {
 });
 
 // Firewall monitoring endpoints
-app.get('/api/firewall/status', generalLimiter, async (req, res) => {
+app.get('/api/firewall/status', generalLimiter, async (_req, res) => {
   try {
     const status = await getUFWStatus();
     res.json(status);
@@ -257,7 +254,7 @@ app.get('/api/firewall/top-attackers', generalLimiter, async (req, res) => {
   }
 });
 
-app.get('/api/firewall/ports', generalLimiter, async (req, res) => {
+app.get('/api/firewall/ports', generalLimiter, async (_req, res) => {
   try {
     const [portScan, status] = await Promise.all([getPortScan(), getPortScannerStatus()]);
     res.json({ ...portScan, tools: status });
@@ -270,19 +267,21 @@ app.get('/api/firewall/ports', generalLimiter, async (req, res) => {
 app.post('/api/scrape', scraperLimiter, async (req, res) => {
   try {
     const scrapeSchema = z.object({
-      url: z.string().url().max(2048),
+      url: z.url().max(2048),
       depth: z.number().int().min(1).max(3),
       maxPages: z.number().int().min(1).max(50).optional(),
     });
 
     const { url, depth, maxPages } = scrapeSchema.parse(req.body);
     const urlObj = new URL(url);
-    if (isPrivateOrLoopbackHost(urlObj.hostname)) {
-      return res.status(403).json({ error: 'Cannot scrape internal/private networks' });
-    }
 
     if (!['http:', 'https:'].includes(urlObj.protocol)) {
       return res.status(403).json({ error: 'Only HTTP/HTTPS protocols allowed' });
+    }
+
+    // Literal + DNS-resolved check; the scraper re-checks every navigated URL
+    if (await isPrivateHost(urlObj.hostname)) {
+      return res.status(403).json({ error: 'Cannot scrape internal/private networks' });
     }
 
     console.log(`[SCRAPER] Starting scrape: ${url} (depth: ${depth}, maxPages: ${maxPages || 50})`);
@@ -295,7 +294,7 @@ app.post('/api/scrape', scraperLimiter, async (req, res) => {
     if (error instanceof z.ZodError) {
       return res.status(400).json({
         error: 'Invalid request parameters',
-        details: error.errors,
+        details: error.issues,
       });
     }
     console.error('[SCRAPER] Failed to scrape:', error);
@@ -306,9 +305,17 @@ app.post('/api/scrape', scraperLimiter, async (req, res) => {
   }
 });
 
+// Whitelist of proxied Ollama endpoints. Everything else (delete, pull, push,
+// create, …) is blocked — the dashboard reads and chats, it doesn't manage models.
+const OLLAMA_GET_ENDPOINTS = new Set(['tags', 'ps', 'version']);
+const OLLAMA_POST_ENDPOINTS = new Set(['generate', 'chat', 'show']);
+
 // GET endpoint for Ollama (health checks, listing models)
 app.get('/api/ollama/api/:endpoint', ollamaLimiter, async (req, res) => {
   try {
+    if (!OLLAMA_GET_ENDPOINTS.has(req.params.endpoint)) {
+      return res.status(403).json({ error: 'Ollama endpoint not allowed' });
+    }
     const ollamaPath = `/api/${req.params.endpoint}`;
     const ollamaUrl = `${OLLAMA_BASE_URL}${ollamaPath}`;
 
@@ -339,6 +346,9 @@ app.get('/api/ollama/api/:endpoint', ollamaLimiter, async (req, res) => {
 // POST endpoint for Ollama (chat, generate)
 app.post('/api/ollama/api/:endpoint', ollamaLimiter, async (req, res) => {
   try {
+    if (!OLLAMA_POST_ENDPOINTS.has(req.params.endpoint)) {
+      return res.status(403).json({ error: 'Ollama endpoint not allowed' });
+    }
     const ollamaPath = `/api/${req.params.endpoint}`;
     const ollamaUrl = `${OLLAMA_BASE_URL}${ollamaPath}`;
 
@@ -372,12 +382,12 @@ app.post('/api/ollama/api/:endpoint', ollamaLimiter, async (req, res) => {
   }
 });
 
-app.get('/health', (req, res) => {
+app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: Date.now() });
 });
 
 // Fetches real service status from Statuspage.io APIs
-app.get('/api/service-status', generalLimiter, async (req, res) => {
+app.get('/api/service-status', generalLimiter, async (_req, res) => {
   const services = [
     {
       name: 'Cloudflare',
@@ -409,7 +419,9 @@ app.get('/api/service-status', generalLimiter, async (req, res) => {
   const results = await Promise.allSettled(
     services.map(async service => {
       const response = await fetch(service.apiUrl, { signal: AbortSignal.timeout(5000) });
-      const data = await response.json();
+      const data = (await response.json()) as {
+        status?: { indicator?: string; description?: string };
+      };
       const indicator: string = data?.status?.indicator ?? 'unknown';
       const status =
         indicator === 'none'
@@ -443,7 +455,7 @@ app.get('/api/service-status', generalLimiter, async (req, res) => {
 });
 
 // HTTP HEAD connectivity checks with latency to key internet endpoints
-app.get('/api/connectivity', generalLimiter, async (req, res) => {
+app.get('/api/connectivity', generalLimiter, async (_req, res) => {
   const targets = [
     { name: 'Cloudflare DNS', url: 'https://1.1.1.1' },
     { name: 'Google DNS', url: 'https://8.8.8.8' },
@@ -469,7 +481,7 @@ app.get('/api/connectivity', generalLimiter, async (req, res) => {
   res.json({ checks, timestamp: Date.now() });
 });
 
-app.get('/api/ports', generalLimiter, async (req, res) => {
+app.get('/api/ports', generalLimiter, async (_req, res) => {
   try {
     const [ports, status] = await Promise.all([getActiveDevPorts(), getPortKillerStatus()]);
     res.json({ ports, tools: status });
@@ -691,7 +703,7 @@ app.post('/api/git/bulk/commit', generalLimiter, async (req, res) => {
 
 app.get('/api/npm/scripts', generalLimiter, async (req, res) => {
   try {
-    const repoPath = (req.query.path as string) || process.cwd();
+    const repoPath = validateGitPath((req.query.path as string) || process.cwd());
     const scripts = await getPackageScripts(repoPath);
     res.json(scripts);
   } catch (error) {
@@ -703,13 +715,18 @@ app.get('/api/npm/scripts', generalLimiter, async (req, res) => {
 app.post('/api/npm/run', generalLimiter, async (req, res) => {
   try {
     const runSchema = z.object({
-      scriptName: z.string().min(1).max(100).regex(/^[a-zA-Z0-9:_-]+$/, 'Invalid script name'),
+      scriptName: z
+        .string()
+        .min(1)
+        .max(100)
+        .regex(/^[a-zA-Z0-9:_-]+$/, 'Invalid script name'),
       repoPath: z.string().optional(),
       packageManager: z.enum(['npm', 'pnpm', 'yarn', 'bun']).optional(),
     });
 
     const { scriptName, repoPath, packageManager } = runSchema.parse(req.body);
-    const processId = runScript(scriptName, repoPath || process.cwd(), packageManager || 'npm');
+    const safeRepoPath = validateGitPath(repoPath || process.cwd());
+    const processId = runScript(scriptName, safeRepoPath, packageManager || 'npm');
 
     res.json({ processId, message: 'Script started' });
   } catch (error) {
@@ -755,7 +772,7 @@ app.post('/api/npm/stop', generalLimiter, async (req, res) => {
   }
 });
 
-app.get('/api/npm/running', generalLimiter, async (req, res) => {
+app.get('/api/npm/running', generalLimiter, async (_req, res) => {
   try {
     const processes = getRunningProcesses();
     res.json({ processes });
@@ -774,10 +791,8 @@ app.post('/api/logs/tail', generalLimiter, async (req, res) => {
       color: z.string().optional(),
     });
 
-    const file = tailSchema.parse(req.body);
-    if (!file.color) {
-      file.color = assignColor();
-    }
+    const parsed = tailSchema.parse(req.body);
+    const file: LogFile = { ...parsed, color: parsed.color ?? assignColor() };
 
     const result = await startTailing(file);
     res.json(result);
@@ -819,7 +834,7 @@ app.get('/api/logs/lines', generalLimiter, async (req, res) => {
   }
 });
 
-app.get('/api/logs/active', generalLimiter, async (req, res) => {
+app.get('/api/logs/active', generalLimiter, async (_req, res) => {
   try {
     const tails = getActiveTails();
     res.json({ tails });
@@ -842,8 +857,8 @@ app.post('/api/logs/clear', generalLimiter, async (req, res) => {
 
 app.get('/api/logs/common-paths', generalLimiter, async (req, res) => {
   try {
-    const repoPath = (req.query.path as string) || process.cwd();
-    const suggestions = getCommonLogSuggestions(repoPath);
+    const repoPath = validateGitPath((req.query.path as string) || process.cwd());
+    const suggestions = await getCommonLogSuggestions(repoPath);
     res.json({ suggestions });
   } catch (error) {
     console.error('Failed to get common paths:', error);
@@ -851,45 +866,40 @@ app.get('/api/logs/common-paths', generalLimiter, async (req, res) => {
   }
 });
 
+// One shared broadcast loop instead of a metrics interval per client — the
+// systeminformation scan runs once per tick no matter how many clients listen.
+const broadcastMetrics = async () => {
+  if (wss.clients.size === 0) return;
+  try {
+    const payload = JSON.stringify(await getSystemMetrics());
+    for (const client of wss.clients) {
+      if (client.readyState === 1) client.send(payload); // 1 = OPEN
+    }
+  } catch (error) {
+    console.error('[WebSocket] Failed to broadcast metrics:', error);
+  }
+};
+setInterval(broadcastMetrics, 2000);
+
+// Keepalive ping for all clients
+setInterval(() => {
+  for (const client of wss.clients) {
+    if (client.readyState === 1) client.ping();
+  }
+}, 30000);
+
 wss.on('connection', (ws, req) => {
   console.log('[WebSocket] Client connected from:', req.socket.remoteAddress);
 
-  const sendMetrics = async () => {
-    try {
-      const metrics = await getSystemMetrics();
-      if (ws.readyState === 1) {
-        // OPEN
-        ws.send(JSON.stringify(metrics));
-      }
-    } catch (error) {
-      console.error('[WebSocket] Failed to send metrics:', error);
-    }
-  };
+  // Send initial metrics immediately (cached, so this is cheap)
+  getSystemMetrics()
+    .then(metrics => {
+      if (ws.readyState === 1) ws.send(JSON.stringify(metrics));
+    })
+    .catch(error => console.error('[WebSocket] Failed to send initial metrics:', error));
 
-  // Send initial metrics immediately
-  sendMetrics();
-  const intervalId = setInterval(sendMetrics, 2000);
-
-  // Send ping to keep connection alive
-  const pingInterval = setInterval(() => {
-    if (ws.readyState === 1) {
-      ws.ping();
-    }
-  }, 30000);
-
-  // Cleanup function to clear all intervals
-  const cleanup = () => {
-    console.log('[WebSocket] Client disconnected, cleaning up');
-    clearInterval(intervalId);
-    clearInterval(pingInterval);
-  };
-
-  ws.on('close', cleanup);
-
-  ws.on('error', error => {
-    console.error('[WebSocket] Connection error:', error);
-    cleanup();
-  });
+  ws.on('close', () => console.log('[WebSocket] Client disconnected'));
+  ws.on('error', error => console.error('[WebSocket] Connection error:', error));
 });
 
 wss.on('error', error => {
@@ -915,7 +925,9 @@ server.listen(PORT, HOST, () => {
   if (HOST === '127.0.0.1' || HOST === '::1') {
     console.log(`\n🔒 Listening on loopback only. Set BIND_HOST=0.0.0.0 to expose on LAN.\n`);
   } else {
-    console.log(`\n⚠️  WARNING: listening on ${HOST} — endpoints have NO AUTH. Anyone reachable can run git push, kill processes, run npm scripts, etc.\n`);
+    console.log(
+      `\n⚠️  WARNING: listening on ${HOST} — endpoints have NO AUTH. Anyone reachable can run git push, kill processes, run npm scripts, etc.\n`
+    );
   }
 });
 

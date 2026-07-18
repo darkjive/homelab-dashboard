@@ -1,27 +1,5 @@
 import si from 'systeminformation';
-
-export interface DockerContainer {
-  id: string;
-  name: string;
-  image: string;
-  state: string;
-  status: string;
-  created: number;
-  started: number;
-  ports: string[];
-  mounts: string[];
-  cpu?: number;
-  memory?: number;
-}
-
-export interface DockerInfo {
-  containers: DockerContainer[];
-  running: number;
-  stopped: number;
-  total: number;
-  available: boolean;
-  error?: string;
-}
+import type { DockerContainer, DockerInfo } from '../../shared/types.js';
 
 let lastFetch: { data: DockerInfo; timestamp: number } | null = null;
 let fetchPromise: Promise<DockerInfo> | null = null;

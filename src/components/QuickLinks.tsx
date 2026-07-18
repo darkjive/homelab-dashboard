@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 
 import {
   Mail,
@@ -32,10 +32,9 @@ import {
   Folder,
   Box,
   X,
-  // Custom additions for new icons
-  // If 'Brain' is not available, 'Sparkles' or 'MessageCircle' can be used instead
-  // For 'Wind', 'Cloud' can be used if no specific icon is available
 } from 'lucide-react';
+import { useSetting } from '../lib/settings';
+import { toast } from '../lib/toast';
 
 // Available Lucide icons
 const ICON_OPTIONS = [
@@ -66,11 +65,6 @@ const ICON_OPTIONS = [
   { name: 'File', icon: FileText },
   { name: 'Folder', icon: Folder },
   { name: 'Box', icon: Box },
-  // Additional icons for future use
-  { name: 'Brain', icon: Sparkles }, // 'Brain' is not in Lucide directly, Sparkles is a good substitute
-  { name: 'Palette', icon: Sparkles }, // For Civitai, 'Sparkles' as a creative icon
-  { name: 'MessageSquare', icon: MessageCircle }, // For Claude AI, MessageCircle fits well
-  { name: 'Wind', icon: Cloud }, // For Mistral AI, Cloud as a symbol for something airy/AI
 ];
 
 // Color options
@@ -126,7 +120,7 @@ const BRAND_LOGOS = [
   { name: 'Mistral AI', id: 'mistralai', color: '#FF4D6B' }, // Approximate color
 ];
 
-interface Link {
+export interface QuickLink {
   id: string;
   name: string;
   url: string;
@@ -137,25 +131,10 @@ interface Link {
   color: string;
 }
 
-const DEFAULT_LINKS: Link[] = [
+// Neutral starter set — replace with your own links via the + button or Settings.
+const DEFAULT_LINKS: QuickLink[] = [
   {
     id: '1',
-    name: 'Gmail',
-    url: 'https://mail.google.com/',
-    iconType: 'lucide',
-    iconName: 'Mail',
-    color: 'text-red-400',
-  },
-  {
-    id: '2',
-    name: 'Proton Mail',
-    url: 'https://mail.proton.me/u/0/inbox',
-    iconType: 'lucide',
-    iconName: 'Shield',
-    color: 'text-purple-400',
-  },
-  {
-    id: '3',
     name: 'GitHub',
     url: 'https://github.com/',
     iconType: 'brand',
@@ -163,113 +142,49 @@ const DEFAULT_LINKS: Link[] = [
     color: 'text-gray-400',
   },
   {
-    id: '4',
-    name: 'Docker',
+    id: '2',
+    name: 'Docker Hub',
     url: 'https://hub.docker.com/',
     iconType: 'brand',
     brandId: 'docker',
     color: 'text-blue-400',
   },
   {
-    id: '5',
-    name: 'Perplexity AI',
-    url: 'https://www.perplexity.ai/',
+    id: '3',
+    name: 'Hacker News',
+    url: 'https://news.ycombinator.com/',
     iconType: 'lucide',
-    iconName: 'Brain',
+    iconName: 'Zap',
     color: 'text-orange-400',
   },
   {
-    id: '6',
-    name: 'DuckDuckGo',
-    url: 'https://duckduckgo.com/',
-    iconType: 'brand',
-    brandId: 'duckduckgo',
-    color: 'text-orange-500',
-  },
-  {
-    id: '7',
-    name: 'PHP (Official Site)',
-    url: 'https://www.php.net/',
-    iconType: 'brand',
-    brandId: 'php',
-    color: 'text-indigo-400',
-  },
-  {
-    id: '8',
-    name: 'Wikipedia',
-    url: 'https://www.wikipedia.org/',
+    id: '4',
+    name: 'MDN',
+    url: 'https://developer.mozilla.org/',
     iconType: 'lucide',
-    iconName: 'Globe',
-    color: 'text-gray-600',
+    iconName: 'Book',
+    color: 'text-cyan-400',
   },
   {
-    id: '9',
-    name: 'Node.js',
-    url: 'https://nodejs.org/en',
-    iconType: 'brand',
-    brandId: 'nodedotjs',
-    color: 'text-green-500',
-  },
-  {
-    id: '10',
-    name: 'NPM',
+    id: '5',
+    name: 'npm',
     url: 'https://www.npmjs.com/',
     iconType: 'brand',
     brandId: 'npm',
     color: 'text-red-600',
   },
   {
-    id: '11',
-    name: 'Hugging Face',
-    url: 'https://huggingface.co/',
+    id: '6',
+    name: 'Wikipedia',
+    url: 'https://www.wikipedia.org/',
     iconType: 'lucide',
-    iconName: 'Sparkles',
-    color: 'text-yellow-400',
-  },
-  {
-    id: '12',
-    name: 'Civitai',
-    url: 'https://civitai.com/',
-    iconType: 'lucide',
-    iconName: 'Palette',
-    color: 'text-sky-400',
-  },
-  {
-    id: '13',
-    name: 'Claude AI',
-    url: 'https://claude.ai/',
-    iconType: 'lucide',
-    iconName: 'MessageSquare',
-    color: 'text-blue-500',
-  },
-  {
-    id: '14',
-    name: 'Gemini',
-    url: 'https://gemini.google.com/',
-    iconType: 'brand',
-    brandId: 'googlegemini',
-    color: 'text-purple-600',
-  },
-  {
-    id: '15',
-    name: 'Mistral AI',
-    url: 'https://mistral.ai/',
-    iconType: 'lucide',
-    iconName: 'Wind',
-    color: 'text-rose-500',
-  },
-  {
-    id: '16',
-    name: 'Google.de',
-    url: 'https://www.google.de/',
-    iconType: 'brand',
-    brandId: 'google',
-    color: 'text-red-500',
+    iconName: 'Globe',
+    color: 'text-gray-400',
   },
 ];
 
 // Security: Validate link data from localStorage
-function validateLinks(data: unknown): data is Link[] {
+function validateLinks(data: unknown): data is QuickLink[] {
   if (!Array.isArray(data)) return false;
   return data.every(
     link =>
@@ -285,16 +200,13 @@ function validateLinks(data: unknown): data is Link[] {
 }
 
 export function QuickLinks() {
-  const [links, setLinks] = useState<Link[]>(() => {
+  // Persisted + synced with SettingsPanel automatically; invalid stored data
+  // falls back to the defaults.
+  const [links, setLinks] = useSetting<QuickLink[]>('quick-links', DEFAULT_LINKS, raw => {
     try {
-      const saved = localStorage.getItem('quick-links');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (validateLinks(parsed)) {
-          return parsed;
-        }
-        console.warn('[SECURITY] Invalid quick-links data in localStorage, using default');
-      }
+      const parsed = JSON.parse(raw);
+      if (validateLinks(parsed)) return parsed;
+      console.warn('[SECURITY] Invalid quick-links data in localStorage, using default');
     } catch (error) {
       console.error('[SECURITY] Failed to parse quick-links from localStorage:', error);
     }
@@ -312,52 +224,26 @@ export function QuickLinks() {
     color: 'text-cyan-400',
   });
 
-  useEffect(() => {
-    localStorage.setItem('quick-links', JSON.stringify(links));
-  }, [links]);
-
-  // React to external settings changes (SettingsPanel)
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { key: string } | undefined;
-      if (detail && detail.key !== 'quick-links') return;
-      try {
-        const saved = localStorage.getItem('quick-links');
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (validateLinks(parsed)) {
-            setLinks(parsed);
-          }
-        }
-      } catch {
-        // ignore
-      }
-    };
-    window.addEventListener('homelab:settings-changed', handler);
-    return () => window.removeEventListener('homelab:settings-changed', handler);
-  }, []);
-
   const addLink = () => {
     // Security: Validate URL before adding
     try {
       const urlObj = new URL(formData.url);
       if (!['http:', 'https:'].includes(urlObj.protocol)) {
-        alert('Only HTTP/HTTPS URLs are allowed');
+        toast('Only HTTP/HTTPS URLs are allowed', 'info');
         return;
       }
     } catch {
-      alert('Invalid URL format');
+      toast('Invalid URL format', 'info');
       return;
     }
 
-    // Security: Sanitize name (prevent XSS)
     const sanitizedName = formData.name.trim().slice(0, 50);
     if (!sanitizedName) {
-      alert('Name is required');
+      toast('Name is required', 'info');
       return;
     }
 
-    const newLink: Link = {
+    const newLink: QuickLink = {
       id: Date.now().toString(),
       name: sanitizedName,
       url: formData.url,
@@ -385,7 +271,7 @@ export function QuickLinks() {
     setLinks(links.filter(link => link.id !== id));
   };
 
-  const renderIcon = (link: Link) => {
+  const renderIcon = (link: QuickLink) => {
     if (link.iconType === 'lucide' && link.iconName) {
       const iconConfig = ICON_OPTIONS.find(i => i.name === link.iconName);
       if (iconConfig) {
@@ -423,11 +309,6 @@ export function QuickLinks() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="flex justify-end mb-2">
-        <span className="text-xs bg-cyber-orange/20 text-cyber-orange border border-cyber-orange/40 px-2 py-0.5 rounded font-mono font-bold">
-          DEMO
-        </span>
-      </div>
       {/* Add Link Button */}
       <div className="mb-4">
         <button

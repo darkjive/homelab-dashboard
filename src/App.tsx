@@ -19,6 +19,8 @@ import { LogAggregator } from './components/LogAggregator';
 import { DockerWidget } from './components/DockerWidget';
 import { FirewallMonitor } from './components/FirewallMonitor';
 import { SettingsPanel } from './components/SettingsPanel';
+import { useSetting } from './lib/settings';
+import { Toaster } from './components/Toaster';
 import { Boxes, RotateCcw, Eye, EyeOff, Save, Settings } from 'lucide-react';
 import 'react-grid-layout/css/styles.css';
 
@@ -210,22 +212,9 @@ function App() {
     typeof window !== 'undefined' ? window.innerWidth - 48 : 2500
   );
 
-  const [githubUsername, setGithubUsername] = useState(() => {
-    return localStorage.getItem('github-username') || 'darkjive';
-  });
+  // Persisted + synced with SettingsPanel automatically
+  const [githubUsername] = useSetting('github-username', '');
   const [showSettings, setShowSettings] = useState(false);
-
-  // Listen for settings changes (SettingsPanel dispatches via setSetting)
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { key: string } | undefined;
-      if (!detail || detail.key === 'github-username') {
-        setGithubUsername(localStorage.getItem('github-username') || 'darkjive');
-      }
-    };
-    window.addEventListener('homelab:settings-changed', handler);
-    return () => window.removeEventListener('homelab:settings-changed', handler);
-  }, []);
 
   const [widgetHealth, setWidgetHealth] = useState<Record<string, WidgetHealth>>({});
 
@@ -323,9 +312,7 @@ function App() {
                 <h1 className="text-2xl font-bold cyber-glow">
                   NXSCTRL.LAB<span className="blink-cursor"></span>
                 </h1>
-                <p className="text-xs text-gray-400">
-                  Nexus Control Laboratory
-                </p>
+                <p className="text-xs text-gray-400">Nexus Control Laboratory</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -422,11 +409,11 @@ function App() {
               </div>
             </div>
           )}
-
         </div>
       </header>
 
       <SettingsPanel open={showSettings} onClose={() => setShowSettings(false)} />
+      <Toaster />
 
       <div className="px-6 py-6">
         <GridLayout

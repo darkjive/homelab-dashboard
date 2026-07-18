@@ -2,6 +2,7 @@ import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import { existsSync, readdirSync, statSync } from 'fs';
 import { join, basename } from 'path';
+import type { GitStatus, GitCommit, RepoSummary, BulkResultItem } from '../../shared/types.js';
 
 const execAsync = promisify(exec);
 
@@ -29,25 +30,6 @@ const SKIP_DIRS = new Set([
   'vendor',
   'bower_components',
 ]);
-
-export interface GitStatus {
-  isRepo: boolean;
-  branch: string;
-  ahead: number;
-  behind: number;
-  staged: string[];
-  unstaged: string[];
-  untracked: string[];
-  recentCommits: GitCommit[];
-  hasChanges: boolean;
-}
-
-export interface GitCommit {
-  hash: string;
-  author: string;
-  date: string;
-  message: string;
-}
 
 export async function getGitStatus(repoPath: string = process.cwd()): Promise<GitStatus> {
   // Check if it's a git repo
@@ -208,45 +190,6 @@ export async function gitPush(
 // Multi-Repo Overview
 // ============================================================
 
-export type RepoState =
-  | 'clean'
-  | 'dirty'
-  | 'ahead'
-  | 'behind'
-  | 'diverged'
-  | 'no-upstream'
-  | 'conflict'
-  | 'error';
-
-export interface RepoSummary {
-  path: string;
-  name: string;
-  root: string;
-  branch: string;
-  state: RepoState;
-  ahead: number;
-  behind: number;
-  changedFiles: number;
-  stagedCount: number;
-  unstagedCount: number;
-  untrackedCount: number;
-  hasUpstream: boolean;
-  lastCommit?: {
-    hash: string;
-    message: string;
-    date: string;
-    author: string;
-  };
-  error?: string;
-}
-
-export interface BulkResultItem {
-  path: string;
-  name: string;
-  success: boolean;
-  message: string;
-}
-
 /**
  * Find git repos recursively under `dir` up to `maxDepth` levels.
  * Stops descending into a directory once it is identified as a git repo.
@@ -338,7 +281,12 @@ export async function getRepoSummary(repoPath: string, root: string): Promise<Re
       const s = line.substring(0, 2);
       if (s === '??') {
         untracked++;
-      } else if (s[0] === 'U' || s[1] === 'U' || (s[0] === 'D' && s[1] === 'D') || (s[0] === 'A' && s[1] === 'A')) {
+      } else if (
+        s[0] === 'U' ||
+        s[1] === 'U' ||
+        (s[0] === 'D' && s[1] === 'D') ||
+        (s[0] === 'A' && s[1] === 'A')
+      ) {
         conflict++;
       } else {
         if (s[0] !== ' ' && s[0] !== '?') staged++;
@@ -451,9 +399,7 @@ export async function scanGitRepos(roots: string[], maxDepth = 3): Promise<RepoS
   return results;
 }
 
-export async function gitFetch(
-  repoPath: string
-): Promise<{ success: boolean; message: string }> {
+export async function gitFetch(repoPath: string): Promise<{ success: boolean; message: string }> {
   try {
     const { stdout, stderr } = await execAsync('git fetch --all --prune', { cwd: repoPath });
     return { success: true, message: stdout || stderr || 'Fetched' };

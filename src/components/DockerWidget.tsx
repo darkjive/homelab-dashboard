@@ -1,28 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Container, Play, Square, AlertCircle, RefreshCw } from 'lucide-react';
-
-interface DockerContainer {
-  id: string;
-  name: string;
-  image: string;
-  state: string;
-  status: string;
-  created: number;
-  started: number;
-  ports: string[];
-  mounts: string[];
-  cpu?: number;
-  memory?: number;
-}
-
-interface DockerInfo {
-  containers: DockerContainer[];
-  running: number;
-  stopped: number;
-  total: number;
-  available: boolean;
-  error?: string;
-}
+import type { DockerInfo } from '../../shared/types';
 
 export function DockerWidget() {
   const [dockerInfo, setDockerInfo] = useState<DockerInfo | null>(null);

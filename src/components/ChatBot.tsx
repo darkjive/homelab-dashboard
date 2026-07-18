@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Bot, Send, Trash2 } from 'lucide-react';
+import { getSetting, useSetting } from '../lib/settings';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -17,28 +18,8 @@ type OllamaModel = {
 export function ChatBot() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
-  const [selectedModel, setSelectedModel] = useState(
-    () => localStorage.getItem('chatbot-model') || ''
-  );
-
-  // Persist model choice + react to external settings changes (SettingsPanel)
-  useEffect(() => {
-    if (selectedModel) {
-      localStorage.setItem('chatbot-model', selectedModel);
-    }
-  }, [selectedModel]);
-
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { key: string } | undefined;
-      if (!detail || detail.key === 'chatbot-model') {
-        const next = localStorage.getItem('chatbot-model') || '';
-        if (next && next !== selectedModel) setSelectedModel(next);
-      }
-    };
-    window.addEventListener('homelab:settings-changed', handler);
-    return () => window.removeEventListener('homelab:settings-changed', handler);
-  }, [selectedModel]);
+  // Persisted + synced with SettingsPanel automatically
+  const [selectedModel, setSelectedModel] = useSetting('chatbot-model', '');
   const [loading, setLoading] = useState(false);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'available' | 'unavailable'>(
@@ -70,7 +51,12 @@ export function ChatBot() {
               })
               .map(m => m.name) ?? [];
           setAvailableModels(modelNames);
-          setSelectedModel(prev => (prev && modelNames.includes(prev) ? prev : modelNames[0] ?? ''));
+          // Read the persisted value directly — this runs on an interval, so
+          // the closure over selectedModel would be stale.
+          const current = getSetting('chatbot-model', '');
+          if (!current || !modelNames.includes(current)) {
+            setSelectedModel(modelNames[0] ?? '');
+          }
           setOllamaStatus('available');
         } else {
           setOllamaStatus('unavailable');
@@ -85,7 +71,7 @@ export function ChatBot() {
     // Re-check every 30 seconds
     const interval = setInterval(checkOllama, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [setSelectedModel]);
 
   const sendMessage = async () => {
     if (!input.trim()) return;
@@ -177,7 +163,7 @@ export function ChatBot() {
     setMessages([]);
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
@@ -225,7 +211,9 @@ export function ChatBot() {
           className="w-full bg-cyber-darkbg border border-cyber-border rounded px-3 py-2 text-sm text-cyber-cyan font-mono focus:border-cyber-cyan focus:outline-none"
           disabled={ollamaStatus !== 'available' || availableModels.length === 0}
         >
-          {availableModels.length === 0 && <option value="">No chat-capable models installed</option>}
+          {availableModels.length === 0 && (
+            <option value="">No chat-capable models installed</option>
+          )}
           {availableModels.map(name => (
             <option key={name} value={name}>
               🏠 {name}
@@ -284,7 +272,7 @@ export function ChatBot() {
           type="text"
           value={input}
           onChange={e => setInput(e.target.value)}
-          onKeyPress={handleKeyPress}
+          onKeyDown={handleKeyDown}
           placeholder="Type your message..."
           className="flex-1 bg-cyber-darkbg border border-cyber-border rounded px-3 py-2 text-sm focus:border-cyber-cyan focus:outline-none"
           disabled={loading}

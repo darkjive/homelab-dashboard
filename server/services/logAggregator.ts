@@ -1,23 +1,8 @@
 import { spawn, ChildProcess } from 'child_process';
-import { access } from 'fs/promises';
+import { stat } from 'fs/promises';
 import { join, resolve } from 'path';
 import { homedir } from 'os';
-
-export interface LogFile {
-  id: string;
-  name: string;
-  path: string;
-  color: string;
-}
-
-export interface LogLine {
-  id: string;
-  timestamp: string;
-  source: string;
-  level: 'ERROR' | 'WARN' | 'INFO' | 'DEBUG' | 'UNKNOWN';
-  message: string;
-  color: string;
-}
+import type { LogFile, LogLine, LogLevel, LogSuggestion } from '../../shared/types.js';
 
 interface TailProcess {
   process: ChildProcess;
@@ -38,7 +23,7 @@ const colors = [
 
 let colorIndex = 0;
 
-export function detectLogLevel(line: string): 'ERROR' | 'WARN' | 'INFO' | 'DEBUG' | 'UNKNOWN' {
+export function detectLogLevel(line: string): LogLevel {
   const upper = line.toUpperCase();
   if (upper.includes('ERROR') || upper.includes('ERR') || upper.includes('FATAL')) return 'ERROR';
   if (upper.includes('WARN') || upper.includes('WARNING')) return 'WARN';
@@ -47,18 +32,34 @@ export function detectLogLevel(line: string): 'ERROR' | 'WARN' | 'INFO' | 'DEBUG
   return 'UNKNOWN';
 }
 
+// Tailing is allowed under these roots. This must stay in sync with what
+// getCommonLogSuggestions offers — suggesting a path the tailer rejects is a bug.
+const ALLOWED_TAIL_ROOTS = [process.cwd(), '/var/log', homedir()];
+// Credential stores under $HOME that must never be tail-able.
+const BLOCKED_TAIL_PREFIXES = ['.ssh', '.gnupg', '.aws', '.kube', '.docker'].map(d =>
+  join(homedir(), d)
+);
+
+function assertTailablePath(userPath: string): string {
+  const resolved = resolve(userPath);
+  const allowed = ALLOWED_TAIL_ROOTS.some(root => resolved.startsWith(root + '/'));
+  if (!allowed) {
+    throw new Error(`Access denied — tailing is limited to ${ALLOWED_TAIL_ROOTS.join(', ')}`);
+  }
+  if (BLOCKED_TAIL_PREFIXES.some(p => resolved === p || resolved.startsWith(p + '/'))) {
+    throw new Error('Access denied — path contains credentials');
+  }
+  return resolved;
+}
+
 export async function startTailing(file: LogFile): Promise<{ success: boolean; message: string }> {
   try {
-    // Validate path to prevent path traversal attacks
-    const safeBasePath = process.cwd();
-    const resolvedPath = resolve(file.path);
+    const resolvedPath = assertTailablePath(file.path);
 
-    if (!resolvedPath.startsWith(safeBasePath + '/')) {
-      throw new Error('Path traversal detected - access denied');
+    const st = await stat(resolvedPath);
+    if (!st.isFile()) {
+      throw new Error(`Not a file: ${resolvedPath}`);
     }
-
-    // Check if file exists
-    await access(resolvedPath);
 
     // Stop existing tail for this file
     if (tailProcesses.has(file.id)) {
@@ -190,22 +191,28 @@ export function clearLogs(fileId?: string): void {
   }
 }
 
-// Common log file paths to suggest. Mixes project-local (always available)
-// with conventional system paths across distros — caller should filter to
-// existing files.
-export function getCommonLogPaths(repoPath: string = process.cwd()): string[] {
-  return getCommonLogSuggestions(repoPath).map(s => s.path);
-}
-
-export interface LogSuggestion {
-  category: 'System' | 'Services' | 'Dev' | 'AI Agents';
-  name: string;
-  path: string;
-}
-
 // Curated, categorized suggestions for typical Linux/dev/AI-agent log files.
 // `~` is expanded via os.homedir() so paths are concrete and directly tail-able.
-export function getCommonLogSuggestions(repoPath: string = process.cwd()): LogSuggestion[] {
+// Only paths that exist, are regular files, AND pass the tail allowlist are
+// returned — everything offered here is guaranteed to be tail-able.
+export async function getCommonLogSuggestions(
+  repoPath: string = process.cwd()
+): Promise<LogSuggestion[]> {
+  const candidates = logSuggestionCandidates(repoPath);
+  const checks = await Promise.all(
+    candidates.map(async s => {
+      try {
+        assertTailablePath(s.path);
+        return (await stat(s.path)).isFile() ? s : null;
+      } catch {
+        return null;
+      }
+    })
+  );
+  return checks.filter((s): s is LogSuggestion => s !== null);
+}
+
+function logSuggestionCandidates(repoPath: string): LogSuggestion[] {
   const home = homedir();
   return [
     // ---- System (Linux) ----
@@ -230,14 +237,8 @@ export function getCommonLogSuggestions(repoPath: string = process.cwd()): LogSu
     { category: 'Dev', name: 'frontend.log', path: join(repoPath, 'frontend.log') },
     { category: 'Dev', name: 'backend.log', path: join(repoPath, 'backend.log') },
     { category: 'Dev', name: 'npm debug', path: join(home, '.npm/_logs/debug.log') },
-    { category: 'Dev', name: 'VSCode', path: join(home, '.config/Code/logs') },
     { category: 'Dev', name: 'pm2', path: join(home, '.pm2/pm2.log') },
     // ---- AI agents ----
-    { category: 'AI Agents', name: 'Claude Code', path: join(home, '.claude/logs') },
-    { category: 'AI Agents', name: 'OpenCode', path: join(home, '.local/share/opencode/log') },
-    { category: 'AI Agents', name: 'Cursor', path: join(home, '.config/Cursor/logs') },
-    { category: 'AI Agents', name: 'Continue', path: join(home, '.continue/sessions') },
     { category: 'AI Agents', name: 'Aider', path: join(home, '.aider.chat.log.md') },
-    { category: 'AI Agents', name: 'Gemini CLI', path: join(home, '.gemini/tmp') },
   ];
 }

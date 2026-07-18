@@ -74,9 +74,10 @@ export function RSSFeed({ url, maxItems = 10 }: RSSFeedProps) {
   };
 
   const stripHtml = (html: string) => {
-    const div = document.createElement('div');
-    div.innerHTML = html;
-    return div.textContent || div.innerText || '';
+    // DOMParser neither executes scripts nor loads resources — unlike
+    // innerHTML on a detached node, where <img onerror=…> still fires.
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    return doc.body.textContent || '';
   };
 
   if (loading) {

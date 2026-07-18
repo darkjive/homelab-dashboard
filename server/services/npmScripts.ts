@@ -1,18 +1,7 @@
 import { spawn, type ChildProcess } from 'child_process';
 import { readFile, access } from 'fs/promises';
 import { join } from 'path';
-
-export interface PackageScripts {
-  scripts: Record<string, string>;
-  projectName: string;
-  packageManager: 'npm' | 'pnpm' | 'yarn' | 'bun';
-}
-
-export interface ScriptOutput {
-  output: string;
-  exitCode: number | null;
-  isRunning: boolean;
-}
+import type { PackageScripts, ScriptOutput } from '../../shared/types.js';
 
 // Store running processes
 const runningProcesses = new Map<string, { process: ChildProcess; output: string[] }>();

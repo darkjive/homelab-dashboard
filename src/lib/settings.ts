@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 const EVENT = 'homelab:settings-changed';
 
@@ -48,19 +48,28 @@ export function useSetting<T>(
 ): [T, (v: T) => void] {
   const [value, setValue] = useState<T>(() => getSetting(key, fallback, parser));
 
+  // Refs keep the listener effect keyed on `key` only — fallback/parser are
+  // typically inline literals whose identity changes every render.
+  const fallbackRef = useRef(fallback);
+  const parserRef = useRef(parser);
+  useEffect(() => {
+    fallbackRef.current = fallback;
+    parserRef.current = parser;
+  });
+
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail as { key: string } | undefined;
       if (!detail || detail.key === key) {
-        setValue(getSetting(key, fallback, parser));
+        setValue(getSetting(key, fallbackRef.current, parserRef.current));
       }
     };
     window.addEventListener(EVENT, handler);
     return () => window.removeEventListener(EVENT, handler);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
-  const update = (v: T) => setSetting(key, v);
+  // Stable identity so callers can safely list the setter in dependency arrays
+  const update = useCallback((v: T) => setSetting(key, v), [key]);
 
   return [value, update];
 }

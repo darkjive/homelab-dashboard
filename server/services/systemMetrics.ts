@@ -3,31 +3,9 @@ import os from 'os';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { readFile, readdir } from 'fs/promises';
+import type { MetricsData, VramGpu } from '../../shared/types.js';
 
 const execFileAsync = promisify(execFile);
-
-export interface MetricsData {
-  cpu: { usage: string; cores: { usage: string }[] };
-  memory: { total: number; used: number; free: number; percentage: string };
-  disk: { fs: string; mount: string; size: number; used: number; percentage: number }[];
-  temperature: { main: number; max: number; cores: number[]; available: boolean; reason?: string };
-  vram: {
-    gpus: VramGpu[];
-    available: boolean;
-    dynamic: boolean;
-    reason?: string;
-  };
-  platform: NodeJS.Platform;
-  timestamp: number;
-}
-
-interface VramGpu {
-  vendor: string;
-  model: string;
-  totalMb: number;
-  usedMb?: number;
-  percentage?: string;
-}
 
 // Query NVIDIA GPUs via nvidia-smi. Returns one entry per GPU with used/total.
 async function getVramFromNvidia(): Promise<VramGpu[]> {
@@ -164,12 +142,38 @@ async function getVram(): Promise<{ gpus: VramGpu[]; dynamic: boolean; reason?: 
   }
   const gpus = await getVramFromGraphics();
   if (gpus.length > 0) {
-    return { gpus, dynamic: false, reason: 'Live usage requires nvidia-smi, amdgpu sysfs, or rocm-smi' };
+    return {
+      gpus,
+      dynamic: false,
+      reason: 'Live usage requires nvidia-smi, amdgpu sysfs, or rocm-smi',
+    };
   }
   return { gpus: [], dynamic: false, reason: 'No GPU VRAM detected' };
 }
 
+// Short-lived cache: the WebSocket broadcast, /api/metrics and the frontend
+// health check all hit this — without it every caller triggers a full
+// systeminformation scan.
+let cached: { data: MetricsData; timestamp: number } | null = null;
+let inflight: Promise<MetricsData> | null = null;
+const CACHE_MS = 2000;
+
 export async function getSystemMetrics(): Promise<MetricsData> {
+  if (cached && Date.now() - cached.timestamp < CACHE_MS) {
+    return cached.data;
+  }
+  if (inflight) {
+    return inflight;
+  }
+  inflight = fetchSystemMetrics().finally(() => {
+    inflight = null;
+  });
+  const data = await inflight;
+  cached = { data, timestamp: Date.now() };
+  return data;
+}
+
+async function fetchSystemMetrics(): Promise<MetricsData> {
   try {
     const [cpu, mem, disk, temp, vram] = await Promise.all([
       si.currentLoad(),

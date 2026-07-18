@@ -1,53 +1,25 @@
 import { useState, useEffect } from 'react';
 import { Cloud, CloudRain, Sun, Wind, Droplets, MapPin, Edit2 } from 'lucide-react';
-
-interface WeatherData {
-  current_condition: Array<{
-    temp_C: string;
-    weatherDesc: Array<{ value: string }>;
-    humidity: string;
-    windspeedKmph: string;
-    FeelsLikeC: string;
-  }>;
-  nearest_area: Array<{
-    areaName: Array<{ value: string }>;
-    country: Array<{ value: string }>;
-  }>;
-}
+import type { WeatherData } from '../../shared/types';
+import { useSetting } from '../lib/settings';
 
 export function WeatherWidget({ location: initialLocation = 'Munich' }: { location?: string }) {
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [location, setLocation] = useState(() => {
-    return localStorage.getItem('weather-location') || initialLocation;
-  });
+  // Persisted + synced with SettingsPanel automatically
+  const [location, setLocation] = useSetting('weather-location', initialLocation);
   const [editingLocation, setEditingLocation] = useState(false);
   const [tempLocation, setTempLocation] = useState(location);
 
   const saveLocation = () => {
     setLocation(tempLocation);
-    localStorage.setItem('weather-location', tempLocation);
     setEditingLocation(false);
   };
-
-  // React to external settings changes (SettingsPanel)
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { key: string } | undefined;
-      if (!detail || detail.key === 'weather-location') {
-        if (!editingLocation) {
-          setLocation(localStorage.getItem('weather-location') || initialLocation);
-        }
-      }
-    };
-    window.addEventListener('homelab:settings-changed', handler);
-    return () => window.removeEventListener('homelab:settings-changed', handler);
-  }, [editingLocation, initialLocation]);
 
   useEffect(() => {
     const fetchWeather = async () => {
       try {
-        const res = await fetch(`/api/weather?location=${location}`);
+        const res = await fetch(`/api/weather?location=${encodeURIComponent(location)}`);
         const data = await res.json();
         setWeather(data);
         setLoading(false);

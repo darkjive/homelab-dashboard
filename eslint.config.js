@@ -8,8 +8,9 @@ import { defineConfig, globalIgnores } from 'eslint/config';
 
 export default defineConfig([
   globalIgnores(['dist', 'node_modules']),
+  // Frontend: browser environment + React rules
   {
-    files: ['**/*.{ts,tsx}'],
+    files: ['src/**/*.{ts,tsx}', 'shared/**/*.ts'],
     extends: [
       js.configs.recommended,
       tseslint.configs.recommended,
@@ -20,6 +21,15 @@ export default defineConfig([
     languageOptions: {
       ecmaVersion: 2020,
       globals: globals.browser,
+    },
+  },
+  // Backend + tooling: Node environment, no React rules
+  {
+    files: ['server/**/*.ts', 'vite.config.ts'],
+    extends: [js.configs.recommended, tseslint.configs.recommended, eslintConfigPrettier],
+    languageOptions: {
+      ecmaVersion: 2023,
+      globals: globals.node,
     },
   },
 ]);

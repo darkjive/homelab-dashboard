@@ -21,13 +21,15 @@ interface GitHubRepo {
   description: string;
 }
 
-export function GitHubStats({ username = 'pxlngn' }: { username?: string }) {
+export function GitHubStats({ username = '' }: { username?: string }) {
   const [user, setUser] = useState<GitHubUser | null>(null);
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!username) return;
+
     let isFirstLoad = true;
 
     const fetchGitHub = async () => {
@@ -82,6 +84,16 @@ export function GitHubStats({ username = 'pxlngn' }: { username?: string }) {
     const interval = setInterval(fetchGitHub, 600000); // Update every 10 minutes (reduced from 5)
     return () => clearInterval(interval);
   }, [username]);
+
+  if (!username) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-center gap-2">
+        <Github className="w-10 h-10 text-gray-600" />
+        <div className="text-sm text-gray-400">No GitHub username configured</div>
+        <div className="text-xs text-gray-600">Set one under Settings → General</div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { RSSFeed } from './RSSFeed';
 import { Edit2, Save, Plus, Trash2 } from 'lucide-react';
+import { useSettingJSON } from '../lib/settings';
 
 interface SavedFeed {
   id: string;
@@ -15,36 +16,12 @@ const defaultFeeds: SavedFeed[] = [
 ];
 
 export function CustomRSSFeed() {
-  const [feeds, setFeeds] = useState<SavedFeed[]>(() => {
-    const saved = localStorage.getItem('custom-rss-feeds');
-    return saved ? JSON.parse(saved) : defaultFeeds;
-  });
+  // Persisted + synced with SettingsPanel automatically
+  const [feeds, setFeeds] = useSettingJSON<SavedFeed[]>('custom-rss-feeds', defaultFeeds);
   const [activeFeedId, setActiveFeedId] = useState<string>(feeds[0]?.id || '');
   const [isEditing, setIsEditing] = useState(false);
   const [newFeedName, setNewFeedName] = useState('');
   const [newFeedUrl, setNewFeedUrl] = useState('');
-
-  useEffect(() => {
-    localStorage.setItem('custom-rss-feeds', JSON.stringify(feeds));
-  }, [feeds]);
-
-  // React to external settings changes (SettingsPanel)
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { key: string } | undefined;
-      if (detail && detail.key !== 'custom-rss-feeds') return;
-      try {
-        const saved = localStorage.getItem('custom-rss-feeds');
-        if (saved) {
-          setFeeds(JSON.parse(saved));
-        }
-      } catch {
-        // ignore
-      }
-    };
-    window.addEventListener('homelab:settings-changed', handler);
-    return () => window.removeEventListener('homelab:settings-changed', handler);
-  }, []);
 
   const addFeed = () => {
     if (!newFeedName.trim() || !newFeedUrl.trim()) return;
@@ -55,16 +32,17 @@ export function CustomRSSFeed() {
       url: newFeedUrl.trim(),
     };
 
-    setFeeds(prev => [...prev, newFeed]);
+    setFeeds([...feeds, newFeed]);
     setActiveFeedId(newFeed.id);
     setNewFeedName('');
     setNewFeedUrl('');
   };
 
   const removeFeed = (id: string) => {
-    setFeeds(prev => prev.filter(f => f.id !== id));
+    const remaining = feeds.filter(f => f.id !== id);
+    setFeeds(remaining);
     if (activeFeedId === id) {
-      setActiveFeedId(feeds[0]?.id || '');
+      setActiveFeedId(remaining[0]?.id || '');
     }
   };
 

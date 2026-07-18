@@ -102,11 +102,21 @@ export async function getUFWLogs(limit = 100): Promise<UFWLogEntry[]> {
 
   // Ordered candidate sources. Each entry yields raw text containing UFW lines.
   const sources: Array<() => Promise<string>> = [
-    () => execAsync(`sudo grep -i "UFW" /var/log/kern.log | tail -n ${safeLimit}`).then(r => r.stdout),
-    () => execAsync(`sudo grep -i "UFW" /var/log/syslog | tail -n ${safeLimit}`).then(r => r.stdout),
-    () => execAsync(`sudo grep -i "UFW" /var/log/messages | tail -n ${safeLimit}`).then(r => r.stdout),
+    () =>
+      execAsync(`sudo -n grep -i "UFW" /var/log/kern.log | tail -n ${safeLimit}`).then(
+        r => r.stdout
+      ),
+    () =>
+      execAsync(`sudo -n grep -i "UFW" /var/log/syslog | tail -n ${safeLimit}`).then(r => r.stdout),
+    () =>
+      execAsync(`sudo -n grep -i "UFW" /var/log/messages | tail -n ${safeLimit}`).then(
+        r => r.stdout
+      ),
     // systemd-journald: Arch/NixOS/Fedora store kernel logs only here.
-    () => execAsync(`journalctl -k --no-pager -n ${safeLimit * 5} 2>/dev/null | grep -i UFW`).then(r => r.stdout),
+    () =>
+      execAsync(`journalctl -k --no-pager -n ${safeLimit * 5} 2>/dev/null | grep -i UFW`).then(
+        r => r.stdout
+      ),
   ];
 
   for (const read of sources) {
@@ -142,13 +152,14 @@ export async function getUFWStatus(): Promise<UFWStatus> {
       defaultOutgoing: 'unknown',
       defaultRouted: 'unknown',
       rules: [],
-      error: 'ufw not installed (only Ubuntu/Debian ship ufw; firewalld/nftables on Fedora/RHEL/Arch/NixOS)',
+      error:
+        'ufw not installed (only Ubuntu/Debian ship ufw; firewalld/nftables on Fedora/RHEL/Arch/NixOS)',
     };
   }
 
   try {
     // Get verbose status
-    const { stdout: statusOutput } = await execAsync('sudo ufw status verbose');
+    const { stdout: statusOutput } = await execAsync('sudo -n ufw status verbose');
 
     const lines = statusOutput.split('\n');
     const active = lines[0]?.includes('active') || false;
@@ -166,7 +177,7 @@ export async function getUFWStatus(): Promise<UFWStatus> {
     // Get numbered rules
     let rules: UFWRule[] = [];
     try {
-      const { stdout: rulesOutput } = await execAsync('sudo ufw status numbered');
+      const { stdout: rulesOutput } = await execAsync('sudo -n ufw status numbered');
       const ruleLines = rulesOutput.split('\n').filter(l => l.match(/^\[\s*\d+\]/));
 
       rules = ruleLines.map(line => {

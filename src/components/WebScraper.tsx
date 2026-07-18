@@ -1,17 +1,9 @@
 import { useState } from 'react';
 import { Globe, Download, Loader, AlertCircle, FileText, Link as LinkIcon } from 'lucide-react';
+import type { ScrapeResult } from '../../shared/types';
 
-interface ScrapeResult {
-  url: string;
-  title: string;
-  markdown: string;
-  metadata: {
-    depth: number;
-    pagesScraped: number;
-    timestamp: string;
-    links: string[];
-  };
-}
+// Must match the zod schema in server/index.ts (depth max 3)
+const MAX_DEPTH = 3;
 
 export function WebScraper() {
   const [url, setUrl] = useState('');
@@ -28,7 +20,7 @@ export function WebScraper() {
     setData(null);
 
     try {
-      const response = await fetch('http://localhost:3010/api/scrape', {
+      const response = await fetch('/api/scrape', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -120,7 +112,7 @@ export function WebScraper() {
           <input
             type="range"
             min="1"
-            max="5"
+            max={MAX_DEPTH}
             value={depth}
             onChange={e => setDepth(parseInt(e.target.value))}
             className="flex-1"
@@ -134,8 +126,6 @@ export function WebScraper() {
               {depth === 1 && 'Single page'}
               {depth === 2 && '+ linked pages'}
               {depth === 3 && '+ 2nd level'}
-              {depth === 4 && '+ 3rd level'}
-              {depth === 5 && 'Deep crawl'}
             </div>
           </div>
         </div>

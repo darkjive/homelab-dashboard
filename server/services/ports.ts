@@ -1,22 +1,13 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import type { ScannedPort } from '../../shared/types.js';
 
 const execAsync = promisify(exec);
 
-// Port information interface
-export interface PortInfo {
-  port: number;
-  protocol: 'TCP' | 'UDP';
-  state: string;
-  service: string;
-  pid?: number;
-  program?: string;
-}
-
-// Port scan result interface
+// Port scan result interface (server-side; scanTime serializes to string)
 export interface PortScanResult {
-  localPorts: PortInfo[];
-  externalPorts: PortInfo[];
+  localPorts: ScannedPort[];
+  externalPorts: ScannedPort[];
   scanTime: Date;
 }
 
@@ -38,8 +29,7 @@ export async function getPortScannerStatus(): Promise<{
   const [ss, nmap] = await Promise.all([check('ss'), check('nmap')]);
   let error: string | undefined;
   if (!ss && !nmap) {
-    error =
-      "neither 'ss' (iproute2) nor 'nmap' is installed — install one to enable port scanning";
+    error = "neither 'ss' (iproute2) nor 'nmap' is installed — install one to enable port scanning";
   } else if (!nmap) {
     error = "'nmap' not installed — external port scan will be empty, only local listeners shown";
   }
@@ -48,7 +38,7 @@ export async function getPortScannerStatus(): Promise<{
 
 // Parse ss output line
 // Example: tcp   LISTEN 0      128          0.0.0.0:22         0.0.0.0:*    users:(("sshd",pid=1234,fd=3))
-function parseSSLine(line: string): PortInfo | null {
+function parseSSLine(line: string): ScannedPort | null {
   const parts = line.trim().split(/\s+/);
   if (parts.length < 5) return null;
 
@@ -82,7 +72,7 @@ function parseSSLine(line: string): PortInfo | null {
 
 // Parse nmap output line
 // Example: 22/tcp   open  ssh
-function parseNmapLine(line: string): PortInfo | null {
+function parseNmapLine(line: string): ScannedPort | null {
   const match = line.match(/^(\d+)\/(tcp|udp)\s+(\w+)\s+(.+)$/);
   if (!match) return null;
 
@@ -124,7 +114,7 @@ function getServiceName(port: number): string {
 }
 
 // Get local listening ports using ss
-export async function getLocalPorts(): Promise<PortInfo[]> {
+export async function getLocalPorts(): Promise<ScannedPort[]> {
   try {
     // ss -tulnp: TCP + UDP, listening, numeric, show process
     const { stdout } = await execAsync('ss -tulnp');
@@ -132,7 +122,7 @@ export async function getLocalPorts(): Promise<PortInfo[]> {
     const lines = stdout.split('\n').slice(1); // Skip header
     const ports = lines
       .map(parseSSLine)
-      .filter((port): port is PortInfo => port !== null)
+      .filter((port): port is ScannedPort => port !== null)
       .sort((a, b) => a.port - b.port);
 
     return ports;
@@ -143,7 +133,7 @@ export async function getLocalPorts(): Promise<PortInfo[]> {
 }
 
 // Get externally visible ports using nmap
-export async function getExternalPorts(): Promise<PortInfo[]> {
+export async function getExternalPorts(): Promise<ScannedPort[]> {
   try {
     // Scan localhost to see what's externally accessible
     // -p-: scan all ports, --open: only show open ports
@@ -154,7 +144,7 @@ export async function getExternalPorts(): Promise<PortInfo[]> {
     const lines = stdout.split('\n');
     const ports = lines
       .map(parseNmapLine)
-      .filter((port): port is PortInfo => port !== null)
+      .filter((port): port is ScannedPort => port !== null)
       .sort((a, b) => a.port - b.port);
 
     return ports;
