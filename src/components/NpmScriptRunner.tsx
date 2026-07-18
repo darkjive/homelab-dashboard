@@ -1,0 +1,429 @@
+import { useState, useEffect } from 'react';
+import {
+  Package,
+  Play,
+  Square,
+  Terminal,
+  RefreshCw,
+  FolderGit2,
+  Plus,
+  X,
+  AlertCircle,
+} from 'lucide-react';
+
+interface PackageScripts {
+  scripts: Record<string, string>;
+  projectName: string;
+  packageManager: 'npm' | 'pnpm' | 'yarn' | 'bun';
+}
+
+interface SavedProject {
+  name: string;
+  path: string;
+}
+
+interface ScriptOutput {
+  output: string;
+  exitCode: number | null;
+  isRunning: boolean;
+}
+
+export function NpmScriptRunner() {
+  const [scripts, setScripts] = useState<PackageScripts | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [runningScripts, setRunningScripts] = useState<Map<string, string>>(new Map());
+  const [selectedScript, setSelectedScript] = useState<string | null>(null);
+  const [scriptOutput, setScriptOutput] = useState<string>('');
+  const [showOutput, setShowOutput] = useState(false);
+
+  // Project management (same as Git widget)
+  const [savedProjects, setSavedProjects] = useState<SavedProject[]>(() => {
+    try {
+      const saved = localStorage.getItem('npm-projects');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch {
+      // Fallback
+    }
+    return [];
+  });
+
+  const [currentProjectPath, setCurrentProjectPath] = useState<string>(() => {
+    return localStorage.getItem('npm-current-project') || '';
+  });
+
+  const [showAddProject, setShowAddProject] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [newProjectPath, setNewProjectPath] = useState('');
+
+  const fetchScripts = async (projectPath?: string) => {
+    const path = projectPath || currentProjectPath;
+    try {
+      const url = path
+        ? `http://localhost:3010/api/npm/scripts?path=${encodeURIComponent(path)}`
+        : 'http://localhost:3010/api/npm/scripts';
+
+      const res = await fetch(url);
+      const data = await res.json();
+      setScripts(data);
+      setLoading(false);
+    } catch (error) {
+      console.error('Failed to fetch package scripts:', error);
+      setLoading(false);
+    }
+  };
+
+  const runScript = async (scriptName: string) => {
+    try {
+      const res = await fetch('http://localhost:3010/api/npm/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scriptName,
+          repoPath: currentProjectPath || undefined,
+          packageManager: scripts?.packageManager || 'npm',
+        }),
+      });
+
+      const result = await res.json();
+      if (result.processId) {
+        setRunningScripts(prev => new Map(prev).set(scriptName, result.processId));
+        setSelectedScript(scriptName);
+        setShowOutput(true);
+        pollOutput(result.processId);
+      }
+    } catch (error) {
+      console.error('Failed to run script:', error);
+      alert(`Failed to run ${scriptName}`);
+    }
+  };
+
+  const stopScript = async (scriptName: string) => {
+    const processId = runningScripts.get(scriptName);
+    if (!processId) return;
+
+    try {
+      await fetch('http://localhost:3010/api/npm/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ processId }),
+      });
+
+      setRunningScripts(prev => {
+        const next = new Map(prev);
+        next.delete(scriptName);
+        return next;
+      });
+    } catch (error) {
+      console.error('Failed to stop script:', error);
+    }
+  };
+
+  const pollOutput = (processId: string) => {
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`http://localhost:3010/api/npm/output/${processId}`);
+        const data: ScriptOutput = await res.json();
+
+        setScriptOutput(data.output);
+
+        if (!data.isRunning) {
+          clearInterval(interval);
+        }
+      } catch (error) {
+        console.error('Failed to fetch output:', error);
+        clearInterval(interval);
+      }
+    }, 500);
+
+    return () => clearInterval(interval);
+  };
+
+  const addProject = () => {
+    if (!newProjectName.trim() || !newProjectPath.trim()) {
+      alert('Both name and path are required');
+      return;
+    }
+
+    const newProject = { name: newProjectName.trim(), path: newProjectPath.trim() };
+    const updated = [...savedProjects, newProject];
+    setSavedProjects(updated);
+    localStorage.setItem('npm-projects', JSON.stringify(updated));
+
+    setCurrentProjectPath(newProject.path);
+    localStorage.setItem('npm-current-project', newProject.path);
+
+    setNewProjectName('');
+    setNewProjectPath('');
+    setShowAddProject(false);
+    fetchScripts(newProject.path);
+  };
+
+  const removeProject = (path: string) => {
+    const updated = savedProjects.filter(p => p.path !== path);
+    setSavedProjects(updated);
+    localStorage.setItem('npm-projects', JSON.stringify(updated));
+
+    if (currentProjectPath === path) {
+      const newPath = updated.length > 0 ? updated[0].path : '';
+      setCurrentProjectPath(newPath);
+      localStorage.setItem('npm-current-project', newPath);
+      fetchScripts(newPath);
+    }
+  };
+
+  const switchProject = (path: string) => {
+    setCurrentProjectPath(path);
+    localStorage.setItem('npm-current-project', path);
+    setRunningScripts(new Map()); // Clear running scripts
+    setShowOutput(false);
+    fetchScripts(path);
+  };
+
+  useEffect(() => {
+    fetchScripts();
+    const interval = setInterval(() => fetchScripts(), 10000);
+    return () => clearInterval(interval);
+  }, [currentProjectPath]);
+
+  useEffect(() => {
+    if (selectedScript && runningScripts.has(selectedScript)) {
+      const processId = runningScripts.get(selectedScript)!;
+      const cleanup = pollOutput(processId);
+      return cleanup;
+    }
+  }, [selectedScript, runningScripts]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-cyber-cyan">
+          LOADING SCRIPTS<span className="blink-cursor"></span>
+        </div>
+      </div>
+    );
+  }
+
+  const currentProject = savedProjects.find(p => p.path === currentProjectPath);
+
+  return (
+    <div className="h-full overflow-y-auto">
+      {/* Project Selector */}
+      <div className="mb-3 pb-3 border-b border-cyber-border">
+        <div className="flex items-center gap-2 mb-2">
+          <FolderGit2 className="w-4 h-4 text-cyber-cyan" />
+          <select
+            value={currentProjectPath}
+            onChange={e => switchProject(e.target.value)}
+            className="flex-1 px-2 py-1 bg-cyber-darkbg border border-cyber-border text-gray-300 text-xs rounded font-mono"
+          >
+            <option value="">Dashboard Project</option>
+            {savedProjects.map((project, i) => (
+              <option key={i} value={project.path}>
+                {project.name}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={() => setShowAddProject(!showAddProject)}
+            className="cyber-button p-1"
+            title="Add project"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        </div>
+
+        {showAddProject && (
+          <div className="mt-2 p-2 bg-cyber-cardbg border border-cyber-cyan rounded">
+            <input
+              type="text"
+              value={newProjectName}
+              onChange={e => setNewProjectName(e.target.value)}
+              placeholder="Project name"
+              className="w-full px-2 py-1 bg-cyber-darkbg border border-cyber-border text-gray-300 text-xs rounded mb-2"
+            />
+            <input
+              type="text"
+              value={newProjectPath}
+              onChange={e => setNewProjectPath(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && addProject()}
+              placeholder="Absolute path"
+              className="w-full px-2 py-1 bg-cyber-darkbg border border-cyber-border text-gray-300 text-xs rounded mb-2"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={addProject}
+                className="flex-1 bg-cyber-cyan text-black px-2 py-1 rounded text-xs font-bold hover:bg-cyber-orange"
+              >
+                Add
+              </button>
+              <button
+                onClick={() => {
+                  setShowAddProject(false);
+                  setNewProjectName('');
+                  setNewProjectPath('');
+                }}
+                className="px-2 py-1 bg-gray-700 text-gray-300 rounded text-xs"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {currentProject && (
+          <div className="flex items-center justify-between mt-2 text-xs text-gray-500">
+            <span className="truncate flex-1 font-mono">{currentProject.path}</span>
+            <button
+              onClick={() => removeProject(currentProject.path)}
+              className="ml-2 text-red-400 hover:text-red-300"
+              title="Remove"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <Package className="w-6 h-6 text-cyber-cyan" />
+          <div>
+            <h3 className="text-xl font-bold cyber-glow">
+              {currentProject?.name || scripts?.projectName || 'NPM SCRIPTS'}
+            </h3>
+            <div className="text-xs text-gray-400">
+              {scripts?.packageManager || 'npm'} • {Object.keys(scripts?.scripts || {}).length}{' '}
+              scripts
+            </div>
+          </div>
+        </div>
+        <button
+          onClick={() => fetchScripts()}
+          disabled={loading}
+          className="cyber-button flex items-center gap-2 text-sm"
+          title="Refresh scripts"
+        >
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        </button>
+      </div>
+
+      {!scripts?.scripts || Object.keys(scripts.scripts).length === 0 ? (
+        <div className="flex flex-col items-center justify-center h-48 text-gray-500">
+          <AlertCircle className="w-12 h-12 mb-2 opacity-50" />
+          <p className="text-sm">No package.json found</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {Object.entries(scripts.scripts).map(([name, command]) => {
+            const isRunning = runningScripts.has(name);
+
+            return (
+              <div
+                key={name}
+                className={`cyber-card p-3 rounded border transition-all ${
+                  isRunning
+                    ? 'border-green-500 bg-green-900/20'
+                    : 'border-cyber-border hover:border-cyber-cyan'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-lg font-bold text-cyber-cyan">{name}</span>
+                      {isRunning && (
+                        <span className="text-xs text-green-400 flex items-center gap-1">
+                          <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+                          Running
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-400 font-mono truncate" title={command}>
+                      {command}
+                    </div>
+                  </div>
+                  <div className="flex gap-2 flex-shrink-0">
+                    {isRunning ? (
+                      <>
+                        <button
+                          onClick={() => {
+                            setSelectedScript(name);
+                            setShowOutput(true);
+                          }}
+                          className="cyber-button p-2"
+                          title="View output"
+                        >
+                          <Terminal className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => stopScript(name)}
+                          className="bg-red-600 text-white px-3 py-2 rounded hover:bg-red-700 transition-all"
+                          title="Stop script"
+                        >
+                          <Square className="w-4 h-4" />
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => runScript(name)}
+                        className="bg-green-600 text-white px-3 py-2 rounded hover:bg-green-700 transition-all flex items-center gap-2"
+                        title="Run script"
+                      >
+                        <Play className="w-4 h-4" />
+                        <span className="text-sm font-bold">Run</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Output Modal */}
+      {showOutput && selectedScript && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-cyber-darkbg border-2 border-cyber-cyan rounded-lg w-full max-w-4xl max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-cyber-border">
+              <div className="flex items-center gap-2">
+                <Terminal className="w-5 h-5 text-cyber-cyan" />
+                <h3 className="text-lg font-bold cyber-glow">{selectedScript}</h3>
+                {runningScripts.has(selectedScript) && (
+                  <span className="text-xs text-green-400 flex items-center gap-1">
+                    <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+                    Running
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => setShowOutput(false)}
+                className="text-gray-400 hover:text-white"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 bg-black font-mono text-xs text-gray-300">
+              <pre className="whitespace-pre-wrap">{scriptOutput || 'No output yet...'}</pre>
+            </div>
+            <div className="p-4 border-t border-cyber-border flex justify-end gap-2">
+              {runningScripts.has(selectedScript) && (
+                <button
+                  onClick={() => stopScript(selectedScript)}
+                  className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 flex items-center gap-2"
+                >
+                  <Square className="w-4 h-4" />
+                  Stop Script
+                </button>
+              )}
+              <button onClick={() => setShowOutput(false)} className="cyber-button px-4 py-2">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
