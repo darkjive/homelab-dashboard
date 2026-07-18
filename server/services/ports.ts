@@ -20,6 +20,32 @@ export interface PortScanResult {
   scanTime: Date;
 }
 
+// Report which scanner tools are installed. nmap is optional (slow external
+// scan); ss is the fast local listener lister and ships with iproute2.
+export async function getPortScannerStatus(): Promise<{
+  ss: boolean;
+  nmap: boolean;
+  error?: string;
+}> {
+  const check = async (bin: string) => {
+    try {
+      await execAsync(`command -v ${bin}`);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const [ss, nmap] = await Promise.all([check('ss'), check('nmap')]);
+  let error: string | undefined;
+  if (!ss && !nmap) {
+    error =
+      "neither 'ss' (iproute2) nor 'nmap' is installed — install one to enable port scanning";
+  } else if (!nmap) {
+    error = "'nmap' not installed — external port scan will be empty, only local listeners shown";
+  }
+  return { ss, nmap, error };
+}
+
 // Parse ss output line
 // Example: tcp   LISTEN 0      128          0.0.0.0:22         0.0.0.0:*    users:(("sshd",pid=1234,fd=3))
 function parseSSLine(line: string): PortInfo | null {

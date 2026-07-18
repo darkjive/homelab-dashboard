@@ -130,6 +130,9 @@ export function FirewallMonitor() {
     fetchAllData();
     const interval = setInterval(fetchAllData, 60000); // Update every 60s
     return () => clearInterval(interval);
+    // fetchAllData is a component-scope closure; we intentionally run once on
+    // mount and on the interval. Empty deps is deliberate.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (loading) {

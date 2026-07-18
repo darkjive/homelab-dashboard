@@ -41,7 +41,7 @@ export async function getDockerInfo(): Promise<DockerInfo> {
   fetchPromise = (async () => {
     try {
       // Check if Docker is running by getting containers
-      const containers = await si.dockerContainers('all');
+      const containers = await si.dockerContainers(true);
 
       if (!containers || containers.length === 0) {
         const emptyInfo: DockerInfo = {
@@ -55,7 +55,11 @@ export async function getDockerInfo(): Promise<DockerInfo> {
         return emptyInfo;
       }
 
-      // Map systeminformation docker data to our interface
+      // Map systeminformation docker data to our interface.
+      // Cast to any: systeminformation's declared DockerContainerData omits
+      // `status`/`cpuPercent`/`memPercent` which the runtime DOES return when
+      // stats are available — using the declared type would drop those fields.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const mappedContainers: DockerContainer[] = containers.map((c: any) => ({
         id: c.id || '',
         name: c.name || 'unknown',

@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
 import { existsSync } from 'fs';
-import { resolve, relative } from 'path';
+import { resolve } from 'path';
 
 try {
   process.loadEnvFile();
@@ -16,7 +16,7 @@ try {
 import { getSystemMetrics } from './services/systemMetrics.js';
 import { getWeather } from './services/weather.js';
 import { scrapeUrl } from './services/scraper.js';
-import { getActiveDevPorts, killPortProcess } from './services/portKiller.js';
+import { getActiveDevPorts, killPortProcess, getPortKillerStatus } from './services/portKiller.js';
 import {
   getGitStatus,
   gitPull,
@@ -44,23 +44,11 @@ import {
   getActiveTails,
   clearLogs,
   assignColor,
-  getCommonLogPaths,
+  getCommonLogSuggestions,
 } from './services/logAggregator.js';
 import { getDockerInfo } from './services/docker.js';
 import { getUFWStatus, getUFWLogs, getTopAttackers } from './services/ufw.js';
-import { getPortScan } from './services/ports.js';
-
-// Path traversal protection helper
-function validatePath(userPath: string): string {
-  const safeBasePath = process.cwd();
-  const resolvedPath = resolve(userPath);
-
-  if (!resolvedPath.startsWith(safeBasePath + '/')) {
-    throw new Error('Path traversal detected - access denied');
-  }
-
-  return resolvedPath;
-}
+import { getPortScan, getPortScannerStatus } from './services/ports.js';
 
 // Sensitive system paths that must never be touched by git operations
 const BLOCKED_PATH_PREFIXES = ['/proc', '/sys', '/dev', '/boot', '/etc', '/root', '/var/log'];
@@ -80,8 +68,47 @@ function validateGitPath(userPath: string): string {
   return resolvedPath;
 }
 
+/**
+ * SSRF guard: returns true for hostnames that resolve to or are private /
+ * loopback / link-local / CGNAT addresses. Prevents the scraper from being
+ * used to probe internal services. Handles IPv4, IPv6 (incl. ::1, fc00::/7,
+ * fe80::/10), and the literal "localhost" name.
+ */
+function isPrivateOrLoopbackHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost')) return true;
+  if (host === '::1' || host === '::' || host === '::ffff:127.0.0.1') return true;
+
+  // IPv4 dotted-quad — strip any IPv4-in-IPv6 prefix
+  const v4 = host.startsWith('::ffff:') ? host.slice(7) : host;
+  const m = v4.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (m) {
+    const [a, b] = [parseInt(m[1]), parseInt(m[2])].map(octet => {
+      if (octet > 255) return NaN;
+      return octet;
+    });
+    if (a === 10) return true; // 10.0.0.0/8
+    if (a === 127) return true; // 127.0.0.0/8 (loopback)
+    if (a === 0) return true; // 0.0.0.0/8
+    if (a === 169 && b === 254) return true; // 169.254.0.0/16 (link-local)
+    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+    if (a === 192 && b === 168) return true; // 192.168.0.0/16
+    if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 (CGNAT)
+  }
+
+  // IPv6 private/link-local (only simple forms — does not normalize)
+  if (host.startsWith('fc') || host.startsWith('fd')) return true; // fc00::/7 ULA
+  if (host.startsWith('fe80:') || host.startsWith('fe90:') || host.startsWith('fea0:') || host.startsWith('feb0:'))
+    return true; // fe80::/10 link-local
+
+  return false;
+}
+
 const app = express();
 const PORT = 3010;
+// Bind to loopback by default. Set BIND_HOST=0.0.0.0 to expose on the LAN —
+// make sure you understand the consequences (no auth on any endpoint).
+const HOST = process.env.BIND_HOST || '127.0.0.1';
 const OLLAMA_BASE_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 const server = createServer(app);
 
@@ -232,8 +259,8 @@ app.get('/api/firewall/top-attackers', generalLimiter, async (req, res) => {
 
 app.get('/api/firewall/ports', generalLimiter, async (req, res) => {
   try {
-    const portScan = await getPortScan();
-    res.json(portScan);
+    const [portScan, status] = await Promise.all([getPortScan(), getPortScannerStatus()]);
+    res.json({ ...portScan, tools: status });
   } catch (error) {
     console.error('Failed to perform port scan:', error);
     res.status(500).json({ error: 'Failed to perform port scan' });
@@ -249,10 +276,8 @@ app.post('/api/scrape', scraperLimiter, async (req, res) => {
     });
 
     const { url, depth, maxPages } = scrapeSchema.parse(req.body);
-
     const urlObj = new URL(url);
-    const blockedHosts = ['localhost', '127.0.0.1', '0.0.0.0', '::1', '192.168.', '10.', '172.16.'];
-    if (blockedHosts.some(blocked => urlObj.hostname.includes(blocked))) {
+    if (isPrivateOrLoopbackHost(urlObj.hostname)) {
       return res.status(403).json({ error: 'Cannot scrape internal/private networks' });
     }
 
@@ -302,7 +327,7 @@ app.get('/api/ollama/api/:endpoint', ollamaLimiter, async (req, res) => {
 
     const data = await response.json();
     res.json(data);
-  } catch (error) {
+  } catch {
     // Silent fail - Ollama not running is expected
     res.status(503).json({
       available: false,
@@ -446,8 +471,8 @@ app.get('/api/connectivity', generalLimiter, async (req, res) => {
 
 app.get('/api/ports', generalLimiter, async (req, res) => {
   try {
-    const ports = await getActiveDevPorts();
-    res.json({ ports });
+    const [ports, status] = await Promise.all([getActiveDevPorts(), getPortKillerStatus()]);
+    res.json({ ports, tools: status });
   } catch (error) {
     console.error('Failed to fetch active ports:', error);
     res.status(500).json({ error: 'Failed to fetch active ports' });
@@ -678,7 +703,7 @@ app.get('/api/npm/scripts', generalLimiter, async (req, res) => {
 app.post('/api/npm/run', generalLimiter, async (req, res) => {
   try {
     const runSchema = z.object({
-      scriptName: z.string().min(1).max(100),
+      scriptName: z.string().min(1).max(100).regex(/^[a-zA-Z0-9:_-]+$/, 'Invalid script name'),
       repoPath: z.string().optional(),
       packageManager: z.enum(['npm', 'pnpm', 'yarn', 'bun']).optional(),
     });
@@ -818,8 +843,8 @@ app.post('/api/logs/clear', generalLimiter, async (req, res) => {
 app.get('/api/logs/common-paths', generalLimiter, async (req, res) => {
   try {
     const repoPath = (req.query.path as string) || process.cwd();
-    const paths = getCommonLogPaths(repoPath);
-    res.json({ paths });
+    const suggestions = getCommonLogSuggestions(repoPath);
+    res.json({ suggestions });
   } catch (error) {
     console.error('Failed to get common paths:', error);
     res.status(500).json({ error: 'Failed to get common paths' });
@@ -879,15 +904,19 @@ if (existsSync(distDir)) {
   app.use(express.static(distDir));
 }
 
-server.listen(PORT, () => {
-  console.log(`\n🚀 Homelab Dashboard API running on http://localhost:${PORT}`);
-  console.log(`📊 System Metrics (HTTP): http://localhost:${PORT}/api/metrics`);
-  console.log(`📊 System Metrics (WebSocket): ws://localhost:${PORT}/ws`);
-  console.log(`🌤️  Weather: http://localhost:${PORT}/api/weather?location=Munich`);
-  console.log(`🤖 Ollama Proxy: POST http://localhost:${PORT}/api/ollama/*`);
-  console.log(`🌐 Web Scraper: POST http://localhost:${PORT}/api/scrape`);
-  console.log(`✅ Health Check: http://localhost:${PORT}/health`);
-  console.log(`\n🔒 Security: CORS, Rate Limiting (per endpoint), Input Validation enabled\n`);
+server.listen(PORT, HOST, () => {
+  console.log(`\n🚀 Homelab Dashboard API running on http://${HOST}:${PORT}`);
+  console.log(`📊 System Metrics (HTTP): http://${HOST}:${PORT}/api/metrics`);
+  console.log(`📊 System Metrics (WebSocket): ws://${HOST}:${PORT}/ws`);
+  console.log(`🌤️  Weather: http://${HOST}:${PORT}/api/weather?location=Munich`);
+  console.log(`🤖 Ollama Proxy: POST http://${HOST}:${PORT}/api/ollama/*`);
+  console.log(`🌐 Web Scraper: POST http://${HOST}:${PORT}/api/scrape`);
+  console.log(`✅ Health Check: http://${HOST}:${PORT}/health`);
+  if (HOST === '127.0.0.1' || HOST === '::1') {
+    console.log(`\n🔒 Listening on loopback only. Set BIND_HOST=0.0.0.0 to expose on LAN.\n`);
+  } else {
+    console.log(`\n⚠️  WARNING: listening on ${HOST} — endpoints have NO AUTH. Anyone reachable can run git push, kill processes, run npm scripts, etc.\n`);
+  }
 });
 
 // Cleanup on shutdown

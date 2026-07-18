@@ -1,9 +1,6 @@
-import { exec, spawn } from 'child_process';
-import { promisify } from 'util';
+import { spawn, type ChildProcess } from 'child_process';
 import { readFile, access } from 'fs/promises';
 import { join } from 'path';
-
-const execAsync = promisify(exec);
 
 export interface PackageScripts {
   scripts: Record<string, string>;
@@ -18,7 +15,7 @@ export interface ScriptOutput {
 }
 
 // Store running processes
-const runningProcesses = new Map<string, { process: any; output: string[] }>();
+const runningProcesses = new Map<string, { process: ChildProcess; output: string[] }>();
 
 export async function getPackageScripts(repoPath: string = process.cwd()): Promise<PackageScripts> {
   try {
@@ -81,13 +78,24 @@ export function runScript(
     }
   }
 
-  const command = packageManager === 'npm' ? 'npm' : packageManager;
-  const args = packageManager === 'npm' ? ['run', scriptName] : [scriptName];
+  const pmCommands: Record<string, string> = {
+    npm: 'npm',
+    pnpm: 'pnpm',
+    yarn: 'yarn',
+    bun: 'bun',
+  };
+  const command = pmCommands[packageManager] ?? 'npm';
+  // All package managers support "<pm> run <script>"; using the run form avoids
+  // ambiguity with built-in subcommands (e.g. `pnpm test` would else run pnpm's
+  // own test, not the user script).
+  const args = ['run', scriptName];
 
+  // shell: false — scriptName is constrained to [A-Za-z0-9:_-] by the route's
+  // zod schema; running through a shell would allow metacharacter injection.
   const childProcess = spawn(command, args, {
     cwd: repoPath,
-    shell: true,
-    env: { ...process.env, FORCE_COLOR: '0' }, // Disable colors in output
+    shell: false,
+    env: { ...process.env, FORCE_COLOR: '0' },
   });
 
   const processData = {

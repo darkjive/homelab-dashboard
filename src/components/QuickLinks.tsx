@@ -316,6 +316,27 @@ export function QuickLinks() {
     localStorage.setItem('quick-links', JSON.stringify(links));
   }, [links]);
 
+  // React to external settings changes (SettingsPanel)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { key: string } | undefined;
+      if (detail && detail.key !== 'quick-links') return;
+      try {
+        const saved = localStorage.getItem('quick-links');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (validateLinks(parsed)) {
+            setLinks(parsed);
+          }
+        }
+      } catch {
+        // ignore
+      }
+    };
+    window.addEventListener('homelab:settings-changed', handler);
+    return () => window.removeEventListener('homelab:settings-changed', handler);
+  }, []);
+
   const addLink = () => {
     // Security: Validate URL before adding
     try {

@@ -28,11 +28,13 @@ export interface UFWRule {
 // UFW status interface
 export interface UFWStatus {
   active: boolean;
+  available: boolean;
   logging: string;
   defaultIncoming: string;
   defaultOutgoing: string;
   defaultRouted: string;
   rules: UFWRule[];
+  error?: string;
 }
 
 // Top attacker statistics
@@ -41,6 +43,21 @@ export interface AttackerStats {
   blockedCount: number;
   lastSeen: Date;
   targetPorts: number[];
+}
+
+// Check if a binary exists on PATH (POSIX `command -v`).
+async function binaryExists(name: string): Promise<boolean> {
+  try {
+    await execAsync(`command -v ${name}`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Resolve the limit argument safely into a positive integer for shell use.
+function sanitizeLimit(limit: number): number {
+  return Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 100;
 }
 
 // Parse UFW log line (from kern.log or syslog)
@@ -76,34 +93,59 @@ function parseUFWLogLine(line: string): UFWLogEntry | null {
   };
 }
 
-// Get UFW logs (last N entries)
+// Get UFW logs (last N entries). Tries kern.log (Debian/Ubuntu), syslog
+// (Debian fallback), /var/log/messages (RHEL/Fedora), and journalctl
+// (systemd-journald — Arch/NixOS/Fedora default). Returns [] silently if all
+// sources are unreadable; check getUFWStatus().available for the install check.
 export async function getUFWLogs(limit = 100): Promise<UFWLogEntry[]> {
-  try {
-    // Try kern.log first, fallback to syslog
-    let logs: string;
+  const safeLimit = sanitizeLimit(limit);
+
+  // Ordered candidate sources. Each entry yields raw text containing UFW lines.
+  const sources: Array<() => Promise<string>> = [
+    () => execAsync(`sudo grep -i "UFW" /var/log/kern.log | tail -n ${safeLimit}`).then(r => r.stdout),
+    () => execAsync(`sudo grep -i "UFW" /var/log/syslog | tail -n ${safeLimit}`).then(r => r.stdout),
+    () => execAsync(`sudo grep -i "UFW" /var/log/messages | tail -n ${safeLimit}`).then(r => r.stdout),
+    // systemd-journald: Arch/NixOS/Fedora store kernel logs only here.
+    () => execAsync(`journalctl -k --no-pager -n ${safeLimit * 5} 2>/dev/null | grep -i UFW`).then(r => r.stdout),
+  ];
+
+  for (const read of sources) {
     try {
-      const { stdout } = await execAsync(`sudo grep -i "UFW" /var/log/kern.log | tail -n ${limit}`);
-      logs = stdout;
+      const text = await read();
+      if (text && text.trim()) {
+        const entries = text
+          .split('\n')
+          .filter(l => l.trim())
+          .map(parseUFWLogLine)
+          .filter((entry): entry is UFWLogEntry => entry !== null);
+        if (entries.length > 0) {
+          return entries.reverse(); // most recent first
+        }
+      }
     } catch {
-      const { stdout } = await execAsync(`sudo grep -i "UFW" /var/log/syslog | tail -n ${limit}`);
-      logs = stdout;
+      // source unavailable, try next
     }
-
-    const lines = logs.split('\n').filter(l => l.trim());
-    const entries = lines
-      .map(parseUFWLogLine)
-      .filter((entry): entry is UFWLogEntry => entry !== null)
-      .reverse(); // Most recent first
-
-    return entries;
-  } catch (error) {
-    console.error('Failed to fetch UFW logs:', error);
-    return [];
   }
+
+  return [];
 }
 
 // Get UFW status and rules
 export async function getUFWStatus(): Promise<UFWStatus> {
+  const installed = await binaryExists('ufw');
+  if (!installed) {
+    return {
+      active: false,
+      available: false,
+      logging: 'unknown',
+      defaultIncoming: 'unknown',
+      defaultOutgoing: 'unknown',
+      defaultRouted: 'unknown',
+      rules: [],
+      error: 'ufw not installed (only Ubuntu/Debian ship ufw; firewalld/nftables on Fedora/RHEL/Arch/NixOS)',
+    };
+  }
+
   try {
     // Get verbose status
     const { stdout: statusOutput } = await execAsync('sudo ufw status verbose');
@@ -148,6 +190,7 @@ export async function getUFWStatus(): Promise<UFWStatus> {
 
     return {
       active,
+      available: true,
       logging: loggingMatch?.[1] || 'unknown',
       defaultIncoming: defaultInMatch?.[1] || 'unknown',
       defaultOutgoing: defaultOutMatch?.[1] || 'unknown',
@@ -156,13 +199,18 @@ export async function getUFWStatus(): Promise<UFWStatus> {
     };
   } catch (error) {
     console.error('Failed to fetch UFW status:', error);
+    const message = error instanceof Error ? error.message : String(error);
     return {
       active: false,
+      available: false,
       logging: 'unknown',
       defaultIncoming: 'unknown',
       defaultOutgoing: 'unknown',
       defaultRouted: 'unknown',
       rules: [],
+      error: message.includes('password')
+        ? 'sudo requires a password — configure passwordless sudo for ufw or run the server as root'
+        : `ufw available but status read failed: ${message}`,
     };
   }
 }

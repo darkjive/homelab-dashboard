@@ -14,6 +14,19 @@ export interface PortInfo {
 // Common dev ports to always check
 const DEV_PORTS = [3000, 3010, 4000, 4173, 5000, 5173, 5432, 8000, 8080, 8888, 9000, 27017];
 
+// True if `lsof` is on PATH. Widget degrades to empty list if absent.
+export async function getPortKillerStatus(): Promise<{ available: boolean; error?: string }> {
+  try {
+    await execAsync('command -v lsof');
+    return { available: true };
+  } catch {
+    return {
+      available: false,
+      error: "lsof not found on PATH — install it (Debian: 'lsof', NixOS: 'pkgs.lsof')",
+    };
+  }
+}
+
 export async function getActiveDevPorts(): Promise<PortInfo[]> {
   const ports: PortInfo[] = [];
 

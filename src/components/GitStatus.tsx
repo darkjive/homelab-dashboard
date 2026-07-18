@@ -138,6 +138,23 @@ export function GitStatus() {
     }
     return [];
   });
+
+  // React to external settings changes (SettingsPanel)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { key: string } | undefined;
+      if (!detail || detail.key === 'git-roots') {
+        try {
+          const saved = localStorage.getItem('git-roots');
+          setRoots(saved ? JSON.parse(saved) : []);
+        } catch {
+          setRoots([]);
+        }
+      }
+    };
+    window.addEventListener('homelab:settings-changed', handler);
+    return () => window.removeEventListener('homelab:settings-changed', handler);
+  }, []);
   const [showAddRoot, setShowAddRoot] = useState(false);
   const [newRoot, setNewRoot] = useState('');
 

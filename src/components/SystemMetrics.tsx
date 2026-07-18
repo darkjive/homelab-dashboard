@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Cpu, HardDrive, Activity, Thermometer } from 'lucide-react';
+import { Cpu, HardDrive, Activity, Thermometer, MemoryStick } from 'lucide-react';
 import {
   LineChart,
   Line,
@@ -10,11 +10,27 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 
+interface VramGpu {
+  vendor: string;
+  model: string;
+  totalMb: number;
+  usedMb?: number;
+  percentage?: string;
+}
+
+interface VramData {
+  gpus: VramGpu[];
+  available: boolean;
+  dynamic: boolean;
+  reason?: string;
+}
+
 interface MetricsData {
   cpu: { usage: string; cores: { usage: string }[] };
   memory: { total: number; used: number; free: number; percentage: string };
   disk: { fs: string; mount: string; size: number; used: number; percentage: number }[];
   temperature: { main: number; max: number; cores: number[]; available: boolean; reason?: string };
+  vram?: VramData;
   platform?: string;
   timestamp: number;
 }
@@ -245,6 +261,11 @@ export function SystemMetrics() {
     return `${gb.toFixed(2)} GB`;
   };
 
+  const formatMb = (mb: number) => {
+    if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
+    return `${mb} MB`;
+  };
+
   return (
     <div className="space-y-4">
       {/* Connection Status Indicator */}
@@ -358,6 +379,62 @@ export function SystemMetrics() {
           </div>
         </div>
       </div>
+
+      {/* VRAM */}
+      {metrics.vram && (
+        <div className="cyber-card">
+          <div className="flex items-center gap-3 mb-4">
+            <MemoryStick className="text-cyber-cyan w-6 h-6" />
+            <h3 className="text-xl font-bold cyber-glow">VRAM</h3>
+          </div>
+          {metrics.vram.available ? (
+            <div className="space-y-4">
+              {metrics.vram.gpus.map((gpu, i) => (
+                <div
+                  key={i}
+                  className="border-t border-cyber-border pt-4 first:border-t-0 first:pt-0"
+                >
+                  <div className="flex justify-between mb-2">
+                    <span className="text-gray-400 font-mono text-sm truncate" title={gpu.model}>
+                      {gpu.model}
+                    </span>
+                    {gpu.percentage !== undefined && (
+                      <span className="text-cyber-cyan font-bold">{gpu.percentage}%</span>
+                    )}
+                  </div>
+                  <div className="flex justify-between text-sm mb-2">
+                    <span className="text-gray-500">
+                      {gpu.usedMb !== undefined ? formatMb(gpu.usedMb) : '—'} /{' '}
+                      {formatMb(gpu.totalMb)}
+                    </span>
+                    <span className="text-gray-500 text-xs">{gpu.vendor}</span>
+                  </div>
+                  {gpu.percentage !== undefined && (
+                    <div className="w-full bg-gray-800 rounded-full h-2">
+                      <div
+                        className="h-2 rounded-full transition-all duration-500 bg-gradient-to-r from-cyber-cyan to-cyber-orange"
+                        style={{ width: `${gpu.percentage}%` }}
+                      ></div>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {!metrics.vram.dynamic && metrics.vram.reason && (
+                <div className="text-xs text-gray-500 border-l-2 border-gray-700 pl-3">
+                  {metrics.vram.reason}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="text-gray-400 text-lg">Not Available</div>
+              <div className="text-xs text-gray-500 border-l-2 border-gray-700 pl-3">
+                {metrics.vram.reason || 'No GPU VRAM detected'}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Storage */}
       <div className="cyber-card">

@@ -1,22 +1,182 @@
 import si from 'systeminformation';
 import os from 'os';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { readFile, readdir } from 'fs/promises';
+
+const execFileAsync = promisify(execFile);
 
 export interface MetricsData {
   cpu: { usage: string; cores: { usage: string }[] };
   memory: { total: number; used: number; free: number; percentage: string };
   disk: { fs: string; mount: string; size: number; used: number; percentage: number }[];
   temperature: { main: number; max: number; cores: number[]; available: boolean; reason?: string };
+  vram: {
+    gpus: VramGpu[];
+    available: boolean;
+    dynamic: boolean;
+    reason?: string;
+  };
   platform: NodeJS.Platform;
   timestamp: number;
 }
 
+interface VramGpu {
+  vendor: string;
+  model: string;
+  totalMb: number;
+  usedMb?: number;
+  percentage?: string;
+}
+
+// Query NVIDIA GPUs via nvidia-smi. Returns one entry per GPU with used/total.
+async function getVramFromNvidia(): Promise<VramGpu[]> {
+  try {
+    const { stdout } = await execFileAsync('nvidia-smi', [
+      '--query-gpu=name,memory.total,memory.used',
+      '--format=csv,noheader,nounits',
+    ]);
+    return stdout
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map(line => {
+        const [name, total, used] = line.split(',').map(s => s.trim());
+        const totalMb = parseInt(total, 10);
+        const usedMb = parseInt(used, 10);
+        return {
+          vendor: 'NVIDIA',
+          model: name,
+          totalMb,
+          usedMb,
+          percentage: totalMb > 0 ? ((usedMb / totalMb) * 100).toFixed(1) : '0',
+        };
+      });
+  } catch {
+    return [];
+  }
+}
+
+// Query AMD GPUs via sysfs (no external tool required). Linux only.
+async function getVramFromAmdgpu(): Promise<VramGpu[]> {
+  try {
+    const entries = await readdir('/sys/class/drm');
+    const cardDirs = entries.filter(e => /^card\d+$/.test(e));
+    const gpus: VramGpu[] = [];
+    for (const card of cardDirs) {
+      const base = `/sys/class/drm/${card}/device`;
+      try {
+        const [totalB, usedB, nameRaw] = await Promise.all([
+          readFile(`${base}/mem_info_vram_total`, 'utf8'),
+          readFile(`${base}/mem_info_vram_used`, 'utf8'),
+          readFile(`${base}/product_name`, 'utf8').catch(() => 'AMD GPU'),
+        ]);
+        const total = parseInt(totalB.trim(), 10);
+        const used = parseInt(usedB.trim(), 10);
+        if (total > 0) {
+          gpus.push({
+            vendor: 'AMD',
+            model: nameRaw.trim() || 'AMD GPU',
+            totalMb: Math.round(total / (1024 * 1024)),
+            usedMb: Math.round(used / (1024 * 1024)),
+            percentage: ((used / total) * 100).toFixed(1),
+          });
+        }
+      } catch {
+        // Not an amdgpu device or files missing — skip silently
+      }
+    }
+    return gpus;
+  } catch {
+    return [];
+  }
+}
+
+// Query AMD GPUs via rocm-smi (fallback when sysfs is inaccessible). Defensive parsing —
+// field names can vary between rocm-smi versions, so we look up by key suffix.
+async function getVramFromRocmSmi(): Promise<VramGpu[]> {
+  try {
+    const [memRes, nameRes] = await Promise.allSettled([
+      execFileAsync('rocm-smi', ['--showmeminfo', 'vram', '--json']),
+      execFileAsync('rocm-smi', ['--showproductname', '--json']),
+    ]);
+    if (memRes.status !== 'fulfilled') return [];
+    const vramData = JSON.parse(memRes.value.stdout) as Record<string, Record<string, string>>;
+
+    const names: Record<string, string> = {};
+    if (nameRes.status === 'fulfilled') {
+      try {
+        const nameData = JSON.parse(nameRes.value.stdout) as Record<string, Record<string, string>>;
+        for (const [card, info] of Object.entries(nameData)) {
+          names[card] = info['Card series'] || info['Card model'] || 'AMD GPU';
+        }
+      } catch {
+        // ignore parse error — names are best-effort
+      }
+    }
+
+    const gpus: VramGpu[] = [];
+    for (const [card, info] of Object.entries(vramData)) {
+      const total =
+        parseInt(info['VRAM Total Memory (B)'] ?? '0', 10) ||
+        parseInt(info['VRAM Total Memory (Bytes)'] ?? '0', 10);
+      const used =
+        parseInt(info['VRAM Total Used Memory (B)'] ?? '0', 10) ||
+        parseInt(info['VRAM Total Used Memory (Bytes)'] ?? '0', 10);
+      if (total > 0) {
+        gpus.push({
+          vendor: 'AMD',
+          model: names[card] || 'AMD GPU',
+          totalMb: Math.round(total / (1024 * 1024)),
+          usedMb: Math.round(used / (1024 * 1024)),
+          percentage: ((used / total) * 100).toFixed(1),
+        });
+      }
+    }
+    return gpus;
+  } catch {
+    return [];
+  }
+}
+
+// Fallback: static total VRAM via systeminformation. No usage data.
+async function getVramFromGraphics(): Promise<VramGpu[]> {
+  try {
+    const graphics = await si.graphics();
+    return (graphics.controllers || [])
+      .map(c => ({
+        vendor: c.vendor || 'Unknown',
+        model: c.model || 'GPU',
+        totalMb: c.vram ?? 0,
+      }))
+      .filter(c => c.totalMb > 0);
+  } catch {
+    return [];
+  }
+}
+
+async function getVram(): Promise<{ gpus: VramGpu[]; dynamic: boolean; reason?: string }> {
+  const [nvidia, amdSysfs] = await Promise.all([getVramFromNvidia(), getVramFromAmdgpu()]);
+  // Prefer sysfs (no external dep); fall back to rocm-smi when sysfs yields nothing
+  const amd = amdSysfs.length > 0 ? amdSysfs : await getVramFromRocmSmi();
+  if (nvidia.length > 0 || amd.length > 0) {
+    return { gpus: [...nvidia, ...amd], dynamic: true };
+  }
+  const gpus = await getVramFromGraphics();
+  if (gpus.length > 0) {
+    return { gpus, dynamic: false, reason: 'Live usage requires nvidia-smi, amdgpu sysfs, or rocm-smi' };
+  }
+  return { gpus: [], dynamic: false, reason: 'No GPU VRAM detected' };
+}
+
 export async function getSystemMetrics(): Promise<MetricsData> {
   try {
-    const [cpu, mem, disk, temp] = await Promise.all([
+    const [cpu, mem, disk, temp, vram] = await Promise.all([
       si.currentLoad(),
       si.mem(),
       si.fsSize(),
       si.cpuTemperature(),
+      getVram(),
     ]);
 
     // Detect if temperature sensors are available
@@ -64,6 +224,12 @@ export async function getSystemMetrics(): Promise<MetricsData> {
         available: tempAvailable,
         reason: tempReason,
       },
+      vram: {
+        gpus: vram.gpus,
+        available: vram.gpus.length > 0,
+        dynamic: vram.dynamic,
+        reason: vram.reason,
+      },
       platform: os.platform(),
       timestamp: Date.now(),
     };
@@ -81,6 +247,7 @@ export async function getSystemMetrics(): Promise<MetricsData> {
         available: false,
         reason: 'Failed to fetch temperature data',
       },
+      vram: { gpus: [], available: false, dynamic: false, reason: 'Failed to fetch VRAM data' },
       platform: os.platform(),
       timestamp: Date.now(),
     };

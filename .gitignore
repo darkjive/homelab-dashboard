@@ -15,6 +15,12 @@ dist-ssr
 .env.*
 !.env.example
 
+# Large bundled audio assets — fetch on demand or ship via release artifacts,
+# not in the source tree.
+public/audio/*.ogg
+public/audio/*.mp3
+public/audio/*.wav
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

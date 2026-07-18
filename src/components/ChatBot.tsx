@@ -17,7 +17,28 @@ type OllamaModel = {
 export function ChatBot() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
-  const [selectedModel, setSelectedModel] = useState('');
+  const [selectedModel, setSelectedModel] = useState(
+    () => localStorage.getItem('chatbot-model') || ''
+  );
+
+  // Persist model choice + react to external settings changes (SettingsPanel)
+  useEffect(() => {
+    if (selectedModel) {
+      localStorage.setItem('chatbot-model', selectedModel);
+    }
+  }, [selectedModel]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { key: string } | undefined;
+      if (!detail || detail.key === 'chatbot-model') {
+        const next = localStorage.getItem('chatbot-model') || '';
+        if (next && next !== selectedModel) setSelectedModel(next);
+      }
+    };
+    window.addEventListener('homelab:settings-changed', handler);
+    return () => window.removeEventListener('homelab:settings-changed', handler);
+  }, [selectedModel]);
   const [loading, setLoading] = useState(false);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'available' | 'unavailable'>(

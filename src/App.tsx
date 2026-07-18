@@ -18,7 +18,8 @@ import { NpmScriptRunner } from './components/NpmScriptRunner';
 import { LogAggregator } from './components/LogAggregator';
 import { DockerWidget } from './components/DockerWidget';
 import { FirewallMonitor } from './components/FirewallMonitor';
-import { Boxes, RotateCcw, Eye, EyeOff, Save } from 'lucide-react';
+import { SettingsPanel } from './components/SettingsPanel';
+import { Boxes, RotateCcw, Eye, EyeOff, Save, Settings } from 'lucide-react';
 import 'react-grid-layout/css/styles.css';
 
 interface LayoutItem {
@@ -209,9 +210,22 @@ function App() {
     typeof window !== 'undefined' ? window.innerWidth - 48 : 2500
   );
 
-  const [githubUsername] = useState(() => {
+  const [githubUsername, setGithubUsername] = useState(() => {
     return localStorage.getItem('github-username') || 'darkjive';
   });
+  const [showSettings, setShowSettings] = useState(false);
+
+  // Listen for settings changes (SettingsPanel dispatches via setSetting)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { key: string } | undefined;
+      if (!detail || detail.key === 'github-username') {
+        setGithubUsername(localStorage.getItem('github-username') || 'darkjive');
+      }
+    };
+    window.addEventListener('homelab:settings-changed', handler);
+    return () => window.removeEventListener('homelab:settings-changed', handler);
+  }, []);
 
   const [widgetHealth, setWidgetHealth] = useState<Record<string, WidgetHealth>>({});
 
@@ -310,7 +324,7 @@ function App() {
                   NXSCTRL.LAB<span className="blink-cursor"></span>
                 </h1>
                 <p className="text-xs text-gray-400">
-                  Nexus Control Laboratory // Multi-Task Workspace
+                  Nexus Control Laboratory
                 </p>
               </div>
             </div>
@@ -324,6 +338,14 @@ function App() {
               >
                 {showWidgetControls ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 <span className="hidden sm:inline">Widgets</span>
+              </button>
+              <button
+                onClick={() => setShowSettings(!showSettings)}
+                className={`cyber-button flex items-center gap-2 text-sm ${showSettings ? 'bg-cyber-cyan/20' : ''}`}
+                title="Settings"
+              >
+                <Settings className="w-4 h-4" />
+                <span className="hidden sm:inline">Settings</span>
               </button>
               <button
                 onClick={manualSave}
@@ -400,8 +422,11 @@ function App() {
               </div>
             </div>
           )}
+
         </div>
       </header>
+
+      <SettingsPanel open={showSettings} onClose={() => setShowSettings(false)} />
 
       <div className="px-6 py-6">
         <GridLayout

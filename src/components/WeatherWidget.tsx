@@ -30,6 +30,20 @@ export function WeatherWidget({ location: initialLocation = 'Munich' }: { locati
     setEditingLocation(false);
   };
 
+  // React to external settings changes (SettingsPanel)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { key: string } | undefined;
+      if (!detail || detail.key === 'weather-location') {
+        if (!editingLocation) {
+          setLocation(localStorage.getItem('weather-location') || initialLocation);
+        }
+      }
+    };
+    window.addEventListener('homelab:settings-changed', handler);
+    return () => window.removeEventListener('homelab:settings-changed', handler);
+  }, [editingLocation, initialLocation]);
+
   useEffect(() => {
     const fetchWeather = async () => {
       try {

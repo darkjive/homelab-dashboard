@@ -27,6 +27,22 @@ export function SoundManager() {
     }
   }, [soundEnabled, volume]);
 
+  // React to external settings changes (SettingsPanel)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { key: string } | undefined;
+      if (!detail || detail.key === 'sound-enabled') {
+        setSoundEnabled(localStorage.getItem('sound-enabled') !== 'false');
+      }
+      if (!detail || detail.key === 'sound-volume') {
+        const v = localStorage.getItem('sound-volume');
+        setVolume(v ? parseFloat(v) : 0.3);
+      }
+    };
+    window.addEventListener('homelab:settings-changed', handler);
+    return () => window.removeEventListener('homelab:settings-changed', handler);
+  }, []);
+
   const toggleSound = () => {
     const newState = !soundEnabled;
     setSoundEnabled(newState);

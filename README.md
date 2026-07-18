@@ -103,11 +103,40 @@ The dashboard works out of the box with defaults. For overrides, copy `.env.exam
 cp .env.example .env
 ```
 
-| Variable     | Default                   | Purpose                          |
-| ------------ | ------------------------- | -------------------------------- |
-| `OLLAMA_URL` | `http://localhost:11434`  | Ollama server URL (chatbot proxy)|
+| Variable     | Default                   | Purpose                                                    |
+| ------------ | ------------------------- | ---------------------------------------------------------- |
+| `OLLAMA_URL` | `http://localhost:11434`  | Ollama server URL (chatbot proxy)                          |
+| `BIND_HOST`  | `127.0.0.1`               | Network interface to bind the backend to (loopback default) |
 
 > Backend port is hardcoded to `3010`. Frontend dev is `5173`, Vite preview is `4173`.
+
+### ⚠️ Security defaults
+
+The backend **binds to loopback (`127.0.0.1`) by default** — only your local browser can reach it. This is intentional: there is **no authentication** on any endpoint, and several can run shell commands on your behalf (`/api/ports/kill`, `/api/npm/run`, `/api/git/push|commit`, `/api/logs/tail`, `/api/scrape`).
+
+If you really need LAN access, opt in explicitly:
+
+```bash
+BIND_HOST=0.0.0.0 pnpm dev:server   # exposes backend to the network — your responsibility
+```
+
+### Optional system tools
+
+Widgets degrade gracefully if a tool is missing, and report the reason in their JSON response.
+
+| Tool                | Required by                          | Install hint                                |
+| ------------------- | ------------------------------------ | ------------------------------------------- |
+| `lsof`              | PortKiller                           | Debian: `lsof`, NixOS: `pkgs.lsof`          |
+| `nmap` (optional)   | PortScanner external scan            | Debian: `nmap`                              |
+| `ss`                | PortScanner local listeners          | ships with `iproute2`                       |
+| `ufw` + sudo        | FirewallMonitor (Ubuntu/Debian only) | needs passwordless sudo for `ufw` + `/var/log/kern.log` |
+| `ollama`            | ChatBot                              | https://ollama.ai                           |
+| Docker daemon       | DockerWidget                         | user in `docker` group                      |
+| Playwright Chromium | WebScraper                           | `pnpm exec playwright install`              |
+
+### Installation caveat: `pnpm install --prod` does NOT yield a runnable backend
+
+Several runtime backend deps (`express`, `ws`, `systeminformation`, `cors`) currently live in `devDependencies`. Always install with the full `pnpm install`, never `--prod`.
 
 ### Customization
 

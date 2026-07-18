@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
 

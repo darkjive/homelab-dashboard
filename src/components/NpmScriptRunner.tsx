@@ -53,6 +53,88 @@ export function NpmScriptRunner() {
     return localStorage.getItem('npm-current-project') || '';
   });
 
+  // Git-root-sourced projects: scanned via /api/git/scan, shown alongside manual ones
+  const [gitRoots, setGitRoots] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('git-roots');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // ignore
+    }
+    return [];
+  });
+  const [gitRepos, setGitRepos] = useState<SavedProject[]>([]);
+
+  // React to external settings changes (SettingsPanel)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { key: string } | undefined;
+      if (!detail || detail.key === 'npm-projects') {
+        try {
+          const saved = localStorage.getItem('npm-projects');
+          setSavedProjects(saved ? JSON.parse(saved) : []);
+        } catch {
+          setSavedProjects([]);
+        }
+      }
+      if (!detail || detail.key === 'npm-current-project') {
+        setCurrentProjectPath(localStorage.getItem('npm-current-project') || '');
+      }
+      if (!detail || detail.key === 'git-roots') {
+        try {
+          const saved = localStorage.getItem('git-roots');
+          setGitRoots(saved ? JSON.parse(saved) : []);
+        } catch {
+          setGitRoots([]);
+        }
+      }
+    };
+    window.addEventListener('homelab:settings-changed', handler);
+    return () => window.removeEventListener('homelab:settings-changed', handler);
+  }, []);
+
+  // Scan git-roots whenever they change; surface repos as selectable projects
+  useEffect(() => {
+    if (gitRoots.length === 0) {
+      setGitRepos([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/git/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ roots: gitRoots }),
+        });
+        const data = await res.json();
+        if (cancelled) return;
+        const repos: SavedProject[] = (data.repos || []).map(
+          (r: { name: string; path: string }) => ({ name: r.name, path: r.path }),
+        );
+        setGitRepos(repos);
+      } catch (err) {
+        console.error('Failed to scan git roots for npm projects:', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [gitRoots]);
+
+  // Merge: manual projects first, then git-root repos not already present by path
+  const mergedProjects: SavedProject[] = (() => {
+    const seen = new Set(savedProjects.map(p => p.path));
+    const merged = [...savedProjects];
+    for (const repo of gitRepos) {
+      if (!seen.has(repo.path)) {
+        merged.push(repo);
+        seen.add(repo.path);
+      }
+    }
+    return merged;
+  })();
+
   const [showAddProject, setShowAddProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectPath, setNewProjectPath] = useState('');
@@ -185,6 +267,9 @@ export function NpmScriptRunner() {
     fetchScripts();
     const interval = setInterval(() => fetchScripts(), 10000);
     return () => clearInterval(interval);
+    // fetchScripts is a component-scope closure; depending on it would
+    // invalidate the effect every render. currentProjectPath is the real trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentProjectPath]);
 
   useEffect(() => {
@@ -205,7 +290,10 @@ export function NpmScriptRunner() {
     );
   }
 
-  const currentProject = savedProjects.find(p => p.path === currentProjectPath);
+  const currentProject = mergedProjects.find(p => p.path === currentProjectPath);
+  const isGitRootProject = (
+    path: string | undefined,
+  ): boolean => !!path && gitRepos.some(r => r.path === path) && !savedProjects.some(p => p.path === path);
 
   return (
     <div className="h-full overflow-y-auto">
@@ -219,11 +307,26 @@ export function NpmScriptRunner() {
             className="flex-1 px-2 py-1 bg-cyber-darkbg border border-cyber-border text-gray-300 text-xs rounded font-mono"
           >
             <option value="">Dashboard Project</option>
-            {savedProjects.map((project, i) => (
-              <option key={i} value={project.path}>
-                {project.name}
-              </option>
-            ))}
+            {savedProjects.length > 0 && (
+              <optgroup label="Manual">
+                {savedProjects.map((project, i) => (
+                  <option key={`m-${i}`} value={project.path}>
+                    {project.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {gitRepos.filter(r => !savedProjects.some(p => p.path === r.path)).length > 0 && (
+              <optgroup label="Git Roots">
+                {gitRepos
+                  .filter(r => !savedProjects.some(p => p.path === r.path))
+                  .map((project, i) => (
+                    <option key={`g-${i}`} value={project.path}>
+                      {project.name}
+                    </option>
+                  ))}
+              </optgroup>
+            )}
           </select>
           <button
             onClick={() => setShowAddProject(!showAddProject)}
@@ -275,13 +378,17 @@ export function NpmScriptRunner() {
         {currentProject && (
           <div className="flex items-center justify-between mt-2 text-xs text-gray-500">
             <span className="truncate flex-1 font-mono">{currentProject.path}</span>
-            <button
-              onClick={() => removeProject(currentProject.path)}
-              className="ml-2 text-red-400 hover:text-red-300"
-              title="Remove"
-            >
-              <X className="w-3 h-3" />
-            </button>
+            {isGitRootProject(currentProject.path) ? (
+              <span className="ml-2 text-[10px] text-gray-600 italic">via git root</span>
+            ) : (
+              <button
+                onClick={() => removeProject(currentProject.path)}
+                className="ml-2 text-red-400 hover:text-red-300"
+                title="Remove"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
           </div>
         )}
       </div>

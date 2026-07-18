@@ -28,6 +28,24 @@ export function CustomRSSFeed() {
     localStorage.setItem('custom-rss-feeds', JSON.stringify(feeds));
   }, [feeds]);
 
+  // React to external settings changes (SettingsPanel)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { key: string } | undefined;
+      if (detail && detail.key !== 'custom-rss-feeds') return;
+      try {
+        const saved = localStorage.getItem('custom-rss-feeds');
+        if (saved) {
+          setFeeds(JSON.parse(saved));
+        }
+      } catch {
+        // ignore
+      }
+    };
+    window.addEventListener('homelab:settings-changed', handler);
+    return () => window.removeEventListener('homelab:settings-changed', handler);
+  }, []);
+
   const addFeed = () => {
     if (!newFeedName.trim() || !newFeedUrl.trim()) return;
 

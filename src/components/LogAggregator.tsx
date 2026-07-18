@@ -10,6 +10,7 @@ import {
   Pause,
   PlayCircle,
   X,
+  Sparkles,
 } from 'lucide-react';
 
 interface LogFile {
@@ -28,6 +29,12 @@ interface LogLine {
   color: string;
 }
 
+interface LogSuggestion {
+  category: 'System' | 'Services' | 'Dev' | 'AI Agents';
+  name: string;
+  path: string;
+}
+
 export function LogAggregator() {
   const [activeTails, setActiveTails] = useState<LogFile[]>([]);
   const [logLines, setLogLines] = useState<LogLine[]>([]);
@@ -41,6 +48,11 @@ export function LogAggregator() {
   const [newLogName, setNewLogName] = useState('');
   const [newLogPath, setNewLogPath] = useState('');
 
+  // Example suggestions (fetched from /api/logs/common-paths on demand)
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [suggestions, setSuggestions] = useState<LogSuggestion[]>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+
   // Saved log configs
   const [savedLogs, setSavedLogs] = useState<Omit<LogFile, 'color'>[]>(() => {
     try {
@@ -53,6 +65,23 @@ export function LogAggregator() {
     }
     return [];
   });
+
+  // React to external settings changes (SettingsPanel)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { key: string } | undefined;
+      if (!detail || detail.key === 'log-configs') {
+        try {
+          const saved = localStorage.getItem('log-configs');
+          setSavedLogs(saved ? JSON.parse(saved) : []);
+        } catch {
+          setSavedLogs([]);
+        }
+      }
+    };
+    window.addEventListener('homelab:settings-changed', handler);
+    return () => window.removeEventListener('homelab:settings-changed', handler);
+  }, []);
 
   const logContainerRef = useRef<HTMLDivElement>(null);
 
@@ -163,6 +192,27 @@ export function LogAggregator() {
     }
   };
 
+  const openSuggestions = async () => {
+    setShowSuggestions(true);
+    setSuggestionsLoading(true);
+    try {
+      const res = await fetch('/api/logs/common-paths');
+      const data = await res.json();
+      setSuggestions(data.suggestions || []);
+    } catch (error) {
+      console.error('Failed to fetch log suggestions:', error);
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  };
+
+  const applySuggestion = (s: LogSuggestion) => {
+    setNewLogName(s.name);
+    setNewLogPath(s.path);
+    setShowSuggestions(false);
+    setShowAddLog(true);
+  };
+
   const toggleLevelFilter = (level: string) => {
     setLevelFilter(prev => {
       const next = new Set(prev);
@@ -183,6 +233,9 @@ export function LogAggregator() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
+    // Date.now() is fine here — this runs in a click handler, not during render.
+    // The lint rule can't tell; opting out explicitly.
+    // eslint-disable-next-line react-hooks/purity
     a.download = `logs-${Date.now()}.txt`;
     a.click();
     URL.revokeObjectURL(url);
@@ -296,6 +349,13 @@ export function LogAggregator() {
           >
             <Plus className="w-3 h-3" />
           </button>
+          <button
+            onClick={openSuggestions}
+            className="cyber-button p-1"
+            title="Pick from example paths"
+          >
+            <Sparkles className="w-3 h-3" />
+          </button>
         </div>
 
         {showAddLog && (
@@ -399,6 +459,68 @@ export function LogAggregator() {
           ))
         )}
       </div>
+
+      {/* Suggestions Modal */}
+      {showSuggestions && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-cyber-darkbg border-2 border-cyber-cyan rounded-lg w-full max-w-2xl max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-cyber-border">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-cyber-cyan" />
+                <h3 className="text-lg font-bold cyber-glow">Example Log Paths</h3>
+              </div>
+              <button
+                onClick={() => setShowSuggestions(false)}
+                className="text-gray-400 hover:text-white"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              {suggestionsLoading ? (
+                <div className="text-cyber-cyan text-center py-8">
+                  LOADING<span className="blink-cursor"></span>
+                </div>
+              ) : (
+                (() => {
+                  const categories = ['System', 'Services', 'Dev', 'AI Agents'] as const;
+                  return categories.map(cat => {
+                    const items = suggestions.filter(s => s.category === cat);
+                    if (items.length === 0) return null;
+                    return (
+                      <div key={cat} className="mb-4">
+                        <div className="text-xs font-bold text-cyber-cyan uppercase tracking-wider mb-2">
+                          {cat}
+                        </div>
+                        <div className="space-y-1">
+                          {items.map(s => (
+                            <button
+                              key={`${cat}-${s.name}`}
+                              onClick={() => applySuggestion(s)}
+                              className="w-full text-left px-3 py-2 bg-cyber-cardbg border border-cyber-border rounded hover:border-cyber-cyan transition-colors"
+                            >
+                              <div className="text-sm text-gray-200 font-mono">{s.name}</div>
+                              <div className="text-xs text-gray-500 font-mono truncate">{s.path}</div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  });
+                })()
+              )}
+            </div>
+            <div className="p-4 border-t border-cyber-border flex justify-end">
+              <button
+                onClick={() => setShowSuggestions(false)}
+                className="cyber-button px-4 py-2"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
