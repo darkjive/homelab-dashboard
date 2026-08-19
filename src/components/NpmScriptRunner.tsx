@@ -13,6 +13,7 @@ import {
 
 import type { PackageScripts, ScriptOutput } from '../../shared/types';
 import { useSetting, useSettingJSON } from '../lib/settings';
+import { apiFetch } from '../lib/api';
 import { toast } from '../lib/toast';
 
 interface SavedProject {
@@ -45,7 +46,7 @@ export function NpmScriptRunner() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/git/scan', {
+        const res = await apiFetch('/api/git/scan', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ roots: gitRoots }),
@@ -87,7 +88,7 @@ export function NpmScriptRunner() {
     try {
       const url = path ? `/api/npm/scripts?path=${encodeURIComponent(path)}` : '/api/npm/scripts';
 
-      const res = await fetch(url);
+      const res = await apiFetch(url);
       const data = await res.json();
       setScripts(data);
       setLoading(false);
@@ -99,7 +100,7 @@ export function NpmScriptRunner() {
 
   const runScript = async (scriptName: string) => {
     try {
-      const res = await fetch('/api/npm/run', {
+      const res = await apiFetch('/api/npm/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -128,7 +129,7 @@ export function NpmScriptRunner() {
     if (!processId) return;
 
     try {
-      await fetch('/api/npm/stop', {
+      await apiFetch('/api/npm/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ processId }),
@@ -147,7 +148,7 @@ export function NpmScriptRunner() {
   const pollOutput = (processId: string) => {
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`/api/npm/output/${processId}`);
+        const res = await apiFetch(`/api/npm/output/${processId}`);
         const data: ScriptOutput = await res.json();
 
         setScriptOutput(data.output);

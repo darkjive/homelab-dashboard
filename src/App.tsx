@@ -1,6 +1,11 @@
 import { useState, useEffect } from 'react';
 import GridLayout from 'react-grid-layout/legacy';
-import { SystemMetrics } from './components/SystemMetrics';
+import { CpuWidget } from './components/metrics/CpuWidget';
+import { MemoryWidget } from './components/metrics/MemoryWidget';
+import { MetricsGraphWidget } from './components/metrics/MetricsGraphWidget';
+import { VramWidget } from './components/metrics/VramWidget';
+import { StorageWidget } from './components/metrics/StorageWidget';
+import { TemperatureWidget } from './components/metrics/TemperatureWidget';
 import { WeatherWidget } from './components/WeatherWidget';
 import { GitHubStats } from './components/GitHubStats';
 import { ChatBot } from './components/ChatBot';
@@ -23,6 +28,7 @@ import { useSetting } from './lib/settings';
 import { Toaster } from './components/Toaster';
 import { Boxes, RotateCcw, Eye, EyeOff, Save, Settings } from 'lucide-react';
 import 'react-grid-layout/css/styles.css';
+import { apiFetch } from './lib/api';
 
 interface LayoutItem {
   i: string;
@@ -40,7 +46,12 @@ interface LayoutItem {
 const defaultLayout = [
   // Row 1: Hero Section - Chatbot + System Metrics
   { i: 'chatbot', x: 0, y: 0, w: 6, h: 6, minW: 6, minH: 6 },
-  { i: 'metrics', x: 6, y: 0, w: 6, h: 6, minW: 6, minH: 6 },
+  { i: 'metrics-cpu', x: 6, y: 0, w: 3, h: 4, minW: 3, minH: 3 },
+  { i: 'metrics-memory', x: 9, y: 0, w: 3, h: 4, minW: 3, minH: 3 },
+  { i: 'metrics-graph', x: 6, y: 4, w: 6, h: 4, minW: 4, minH: 3 },
+  { i: 'metrics-vram', x: 6, y: 8, w: 3, h: 4, minW: 3, minH: 3 },
+  { i: 'metrics-storage', x: 9, y: 8, w: 3, h: 4, minW: 3, minH: 3 },
+  { i: 'metrics-temp', x: 6, y: 12, w: 3, h: 3, minW: 3, minH: 3 },
 
   // Row 2: Dev Tools - Logs, Git, NPM
   { i: 'log-aggregator', x: 0, y: 6, w: 6, h: 6, minW: 6, minH: 6 },
@@ -73,7 +84,12 @@ const defaultLayout = [
 ];
 
 const defaultEnabledWidgets = {
-  metrics: true,
+  'metrics-cpu': true,
+  'metrics-memory': true,
+  'metrics-graph': true,
+  'metrics-vram': true,
+  'metrics-storage': true,
+  'metrics-temp': true,
   chatbot: true,
   'quick-links': true,
   'markdown-editor': true,
@@ -100,7 +116,12 @@ interface WidgetHealth {
 }
 
 const widgetConfig = {
-  metrics: { name: '📊 SYSTEM METRICS', component: SystemMetrics },
+  'metrics-cpu': { name: '📊 CPU', component: CpuWidget },
+  'metrics-memory': { name: '📊 MEMORY', component: MemoryWidget },
+  'metrics-graph': { name: '📈 PERFORMANCE', component: MetricsGraphWidget },
+  'metrics-vram': { name: '📊 VRAM', component: VramWidget },
+  'metrics-storage': { name: '📊 STORAGE', component: StorageWidget },
+  'metrics-temp': { name: '🌡️ TEMPERATURE', component: TemperatureWidget },
   chatbot: { name: '🤖 AI CHATBOT', component: ChatBot },
   'quick-links': { name: '🔗 QUICK LINKS', component: QuickLinks },
   'markdown-editor': { name: '📝 MARKDOWN EDITOR', component: MarkdownEditor },
@@ -126,6 +147,70 @@ function validateEnabledWidgets(data: unknown): boolean {
   );
 }
 
+const METRIC_WIDGET_IDS = [
+  'metrics-cpu',
+  'metrics-memory',
+  'metrics-graph',
+  'metrics-vram',
+  'metrics-storage',
+  'metrics-temp',
+];
+
+// One-time migration: split legacy single 'metrics' widget into 6 individual
+// metric widgets. Runs at module load so useState initializers see the new keys.
+function migrateLegacyMetrics() {
+  try {
+    const layoutRaw = localStorage.getItem('dashboard-layout');
+    if (layoutRaw) {
+      const parsed = JSON.parse(layoutRaw);
+      if (
+        Array.isArray(parsed) &&
+        parsed.some((i: { i: string }) => i.i === 'metrics') &&
+        !parsed.some((i: { i: string }) => METRIC_WIDGET_IDS.includes(i.i))
+      ) {
+        const legacy = parsed.find((i: LayoutItem) => i.i === 'metrics') ?? {
+          i: 'metrics',
+          x: 6,
+          y: 0,
+          w: 6,
+          h: 6,
+        };
+        const replacements: LayoutItem[] = [
+          { i: 'metrics-cpu', x: legacy.x, y: legacy.y, w: 3, h: 4, minW: 3, minH: 3 },
+          { i: 'metrics-memory', x: legacy.x + 3, y: legacy.y, w: 3, h: 4, minW: 3, minH: 3 },
+          { i: 'metrics-graph', x: legacy.x, y: legacy.y + 4, w: 6, h: 4, minW: 4, minH: 3 },
+          { i: 'metrics-vram', x: legacy.x, y: legacy.y + 8, w: 3, h: 4, minW: 3, minH: 3 },
+          { i: 'metrics-storage', x: legacy.x + 3, y: legacy.y + 8, w: 3, h: 4, minW: 3, minH: 3 },
+          { i: 'metrics-temp', x: legacy.x, y: legacy.y + 12, w: 3, h: 3, minW: 3, minH: 3 },
+        ];
+        const filtered = parsed.filter((i: LayoutItem) => i.i !== 'metrics');
+        localStorage.setItem('dashboard-layout', JSON.stringify([...filtered, ...replacements]));
+      }
+    }
+  } catch {
+    // Silent migration failure — falls back to defaults
+  }
+
+  try {
+    const enabledRaw = localStorage.getItem('enabled-widgets');
+    if (enabledRaw) {
+      const parsed = JSON.parse(enabledRaw);
+      if (parsed && typeof parsed === 'object' && 'metrics' in parsed) {
+        const { metrics: legacyEnabled, ...rest } = parsed;
+        const next: Record<string, boolean> = { ...rest };
+        for (const id of METRIC_WIDGET_IDS) {
+          if (!(id in next)) next[id] = legacyEnabled === true;
+        }
+        localStorage.setItem('enabled-widgets', JSON.stringify(next));
+      }
+    }
+  } catch {
+    // Silent migration failure
+  }
+}
+
+migrateLegacyMetrics();
+
 // Check widget health (service availability, config status)
 async function checkWidgetHealth(widgetId: string): Promise<WidgetHealth> {
   try {
@@ -133,7 +218,7 @@ async function checkWidgetHealth(widgetId: string): Promise<WidgetHealth> {
       case 'chatbot':
         // Check Ollama availability (silently fail without console spam)
         try {
-          const res = await fetch('/api/ollama/api/tags', {
+          const res = await apiFetch('/api/ollama/api/tags', {
             signal: AbortSignal.timeout(3000),
           });
           if (!res.ok) {
@@ -149,7 +234,7 @@ async function checkWidgetHealth(widgetId: string): Promise<WidgetHealth> {
       case 'web-scraper':
         // Check backend server
         try {
-          const res = await fetch('/api/metrics', { signal: AbortSignal.timeout(3000) });
+          const res = await apiFetch('/api/metrics', { signal: AbortSignal.timeout(3000) });
           if (!res.ok) throw new Error('Backend not available');
           return { status: 'ready' };
         } catch {

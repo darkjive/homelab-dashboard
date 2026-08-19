@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Shield, ShieldAlert, Activity, Network, RefreshCw, AlertCircle } from 'lucide-react';
+import { apiFetch } from '../lib/api';
 
 // Types matching backend interfaces
 interface UFWLogEntry {
@@ -68,7 +69,7 @@ export function FirewallMonitor() {
   // Fetch UFW status
   const fetchStatus = async () => {
     try {
-      const res = await fetch('/api/firewall/status');
+      const res = await apiFetch('/api/firewall/status');
       if (!res.ok) throw new Error('Failed to fetch UFW status');
       const data = await res.json();
       setStatus(data);
@@ -80,7 +81,7 @@ export function FirewallMonitor() {
   // Fetch UFW logs
   const fetchLogs = async () => {
     try {
-      const res = await fetch('/api/firewall/logs?limit=50');
+      const res = await apiFetch('/api/firewall/logs?limit=50');
       if (!res.ok) throw new Error('Failed to fetch UFW logs');
       const data = await res.json();
       setLogs(data.logs);
@@ -92,7 +93,7 @@ export function FirewallMonitor() {
   // Fetch top attackers
   const fetchAttackers = async () => {
     try {
-      const res = await fetch('/api/firewall/top-attackers?limit=10');
+      const res = await apiFetch('/api/firewall/top-attackers?limit=10');
       if (!res.ok) throw new Error('Failed to fetch attackers');
       const data = await res.json();
       setAttackers(data.attackers);
@@ -104,7 +105,7 @@ export function FirewallMonitor() {
   // Fetch port scan
   const fetchPortScan = async () => {
     try {
-      const res = await fetch('/api/firewall/ports');
+      const res = await apiFetch('/api/firewall/ports');
       if (!res.ok) throw new Error('Failed to fetch port scan');
       const data = await res.json();
       setPortScan(data);

@@ -49,6 +49,15 @@ function assertTailablePath(userPath: string): string {
   if (BLOCKED_TAIL_PREFIXES.some(p => resolved === p || resolved.startsWith(p + '/'))) {
     throw new Error('Access denied — path contains credentials');
   }
+  // Block dotfiles/dotdirs directly under $HOME (credentials, shell history, tokens).
+  // Logs under /var/log and the project dir stay allowed — only $HOME root is restrictive.
+  const home = homedir();
+  if (resolved.startsWith(home + '/')) {
+    const rel = resolved.slice(home.length + 1);
+    if (rel.startsWith('.')) {
+      throw new Error('Access denied — dotfiles under $HOME are not tailable');
+    }
+  }
   return resolved;
 }
 
@@ -213,7 +222,6 @@ export async function getCommonLogSuggestions(
 }
 
 function logSuggestionCandidates(repoPath: string): LogSuggestion[] {
-  const home = homedir();
   return [
     // ---- System (Linux) ----
     { category: 'System', name: 'syslog', path: '/var/log/syslog' },
@@ -236,9 +244,5 @@ function logSuggestionCandidates(repoPath: string): LogSuggestion[] {
     { category: 'Dev', name: 'error.log', path: join(repoPath, 'logs/error.log') },
     { category: 'Dev', name: 'frontend.log', path: join(repoPath, 'frontend.log') },
     { category: 'Dev', name: 'backend.log', path: join(repoPath, 'backend.log') },
-    { category: 'Dev', name: 'npm debug', path: join(home, '.npm/_logs/debug.log') },
-    { category: 'Dev', name: 'pm2', path: join(home, '.pm2/pm2.log') },
-    // ---- AI agents ----
-    { category: 'AI Agents', name: 'Aider', path: join(home, '.aider.chat.log.md') },
   ];
 }

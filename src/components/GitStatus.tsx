@@ -27,6 +27,7 @@ import type {
   GitStatus as GitDetail,
 } from '../../shared/types';
 import { useSettingJSON } from '../lib/settings';
+import { apiFetch } from '../lib/api';
 import { toast } from '../lib/toast';
 
 type FilterKey = 'all' | 'dirty' | 'ahead' | 'behind' | 'conflict';
@@ -153,7 +154,7 @@ export function GitStatus() {
     setScanning(true);
     setScanError(null);
     try {
-      const res = await fetch('/api/git/scan', {
+      const res = await apiFetch('/api/git/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roots }),
@@ -199,7 +200,7 @@ export function GitStatus() {
   const loadDetail = useCallback(async (path: string) => {
     setDetailLoading(true);
     try {
-      const res = await fetch(`/api/git/status?path=${encodeURIComponent(path)}`);
+      const res = await apiFetch(`/api/git/status?path=${encodeURIComponent(path)}`);
       const data = await res.json();
       setDetail(data);
     } catch {
@@ -226,7 +227,7 @@ export function GitStatus() {
   const runRepoAction = async (path: string, op: 'pull' | 'push' | 'fetch') => {
     setActionLoading(prev => ({ ...prev, [path]: op }));
     try {
-      const res = await fetch(`/api/git/${op}?path=${encodeURIComponent(path)}`, {
+      const res = await apiFetch(`/api/git/${op}?path=${encodeURIComponent(path)}`, {
         method: 'POST',
       });
       const result = await res.json();
@@ -247,7 +248,7 @@ export function GitStatus() {
     if (!commitMsg.trim()) return;
     setActionLoading(prev => ({ ...prev, [path]: 'commit' }));
     try {
-      const res = await fetch(`/api/git/commit?path=${encodeURIComponent(path)}`, {
+      const res = await apiFetch(`/api/git/commit?path=${encodeURIComponent(path)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: commitMsg }),
@@ -291,7 +292,7 @@ export function GitStatus() {
     setBulkLoading(op);
     setConfirm(null);
     try {
-      const res = await fetch(`/api/git/bulk/${op}`, {
+      const res = await apiFetch(`/api/git/bulk/${op}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ paths }),
@@ -337,7 +338,7 @@ export function GitStatus() {
     setBulkLoading('commit');
     setBulkCommitOpen(false);
     try {
-      const res = await fetch('/api/git/bulk/commit', {
+      const res = await apiFetch('/api/git/bulk/commit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ items }),

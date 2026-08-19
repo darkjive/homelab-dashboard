@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Zap, RefreshCw, Skull, Server, AlertTriangle } from 'lucide-react';
 import type { DevPortInfo } from '../../shared/types';
+import { apiFetch } from '../lib/api';
 import { toast } from '../lib/toast';
 
 export function PortKiller() {
@@ -11,7 +12,7 @@ export function PortKiller() {
 
   const fetchPorts = async () => {
     try {
-      const res = await fetch('/api/ports');
+      const res = await apiFetch('/api/ports');
       const data = await res.json();
       setPorts(data.ports || []);
       setLoading(false);
@@ -24,7 +25,7 @@ export function PortKiller() {
   const killPort = async (port: number) => {
     setKilling(port);
     try {
-      const res = await fetch('/api/ports/kill', {
+      const res = await apiFetch('/api/ports/kill', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ port }),

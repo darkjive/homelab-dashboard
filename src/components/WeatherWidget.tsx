@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Cloud, CloudRain, Sun, Wind, Droplets, MapPin, Edit2 } from 'lucide-react';
 import type { WeatherData } from '../../shared/types';
 import { useSetting } from '../lib/settings';
+import { apiFetch } from '../lib/api';
 
 export function WeatherWidget({ location: initialLocation = 'Munich' }: { location?: string }) {
   const [weather, setWeather] = useState<WeatherData | null>(null);
@@ -19,7 +20,7 @@ export function WeatherWidget({ location: initialLocation = 'Munich' }: { locati
   useEffect(() => {
     const fetchWeather = async () => {
       try {
-        const res = await fetch(`/api/weather?location=${encodeURIComponent(location)}`);
+        const res = await apiFetch(`/api/weather?location=${encodeURIComponent(location)}`);
         const data = await res.json();
         setWeather(data);
         setLoading(false);

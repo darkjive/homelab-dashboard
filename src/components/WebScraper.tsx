@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Globe, Download, Loader, AlertCircle, FileText, Link as LinkIcon } from 'lucide-react';
 import type { ScrapeResult } from '../../shared/types';
+import { apiFetch } from '../lib/api';
 
 // Must match the zod schema in server/index.ts (depth max 3)
 const MAX_DEPTH = 3;
@@ -20,7 +21,7 @@ export function WebScraper() {
     setData(null);
 
     try {
-      const response = await fetch('/api/scrape', {
+      const response = await apiFetch('/api/scrape', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

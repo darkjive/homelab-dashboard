@@ -70,14 +70,7 @@ export interface GitStatus {
 }
 
 export type RepoState =
-  | 'clean'
-  | 'dirty'
-  | 'ahead'
-  | 'behind'
-  | 'diverged'
-  | 'no-upstream'
-  | 'conflict'
-  | 'error';
+  'clean' | 'dirty' | 'ahead' | 'behind' | 'diverged' | 'no-upstream' | 'conflict' | 'error';
 
 export interface RepoSummary {
   path: string;

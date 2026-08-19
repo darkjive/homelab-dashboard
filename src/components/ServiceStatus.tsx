@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Cloud, Server, Globe, Wifi, Circle, RefreshCw } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { apiFetch } from '../lib/api';
 
 interface ServiceStatus {
   name: string;
@@ -24,7 +25,7 @@ export function ServiceStatus() {
 
   const fetchStatus = async () => {
     try {
-      const res = await fetch('/api/service-status');
+      const res = await apiFetch('/api/service-status');
       if (!res.ok) return;
       const data = await res.json();
       setServices(data.services);

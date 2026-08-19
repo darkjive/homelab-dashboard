@@ -189,10 +189,7 @@ async function fetchSystemMetrics(): Promise<MetricsData> {
 
     if (!tempAvailable) {
       const platform = os.platform();
-      if (platform === 'win32') {
-        tempReason =
-          'Temperature sensors typically require admin privileges or specialized drivers on Windows';
-      } else if (platform === 'darwin') {
+      if (platform === 'darwin') {
         tempReason = 'Temperature sensors may not be accessible on macOS without additional tools';
       } else {
         tempReason = 'Temperature sensors not detected or not accessible';

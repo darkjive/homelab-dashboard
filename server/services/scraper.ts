@@ -1,7 +1,7 @@
 import { chromium, type Browser, type Page } from 'playwright';
 import * as cheerio from 'cheerio';
 import TurndownService from 'turndown';
-import { isPrivateHost, isPrivateOrLoopbackHost } from './netGuard.js';
+import { isPrivateHost } from './netGuard.js';
 import type { ScrapeResult } from '../../shared/types.js';
 
 interface ScrapeOptions {
@@ -68,9 +68,9 @@ async function scrapePage(
 
   await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
 
-  // …and the final URL after redirects, so a public page can't bounce us into
-  // the internal network.
-  if (isPrivateOrLoopbackHost(new URL(page.url()).hostname)) {
+  // …and the final URL after redirects (DNS-resolved, so a public page can't
+  // bounce us into the internal network via a hostname whose A record is RFC1918).
+  if (await isPrivateHost(new URL(page.url()).hostname)) {
     throw new Error(`Redirect to private/internal host blocked: ${page.url()}`);
   }
 

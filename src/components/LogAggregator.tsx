@@ -15,6 +15,7 @@ import {
 
 import type { LogFile, LogLine, LogSuggestion } from '../../shared/types';
 import { useSettingJSON } from '../lib/settings';
+import { apiFetch } from '../lib/api';
 import { toast } from '../lib/toast';
 
 export function LogAggregator() {
@@ -42,7 +43,7 @@ export function LogAggregator() {
 
   const fetchActiveTails = async () => {
     try {
-      const res = await fetch('/api/logs/active');
+      const res = await apiFetch('/api/logs/active');
       const data = await res.json();
       setActiveTails(data.tails || []);
     } catch (error) {
@@ -52,7 +53,7 @@ export function LogAggregator() {
 
   const fetchLogLines = async () => {
     try {
-      const res = await fetch('/api/logs/lines');
+      const res = await apiFetch('/api/logs/lines');
       const data = await res.json();
       setLogLines(data.lines || []);
     } catch (error) {
@@ -62,7 +63,7 @@ export function LogAggregator() {
 
   const startTailing = async (log: Omit<LogFile, 'color'>) => {
     try {
-      const res = await fetch('/api/logs/tail', {
+      const res = await apiFetch('/api/logs/tail', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -86,7 +87,7 @@ export function LogAggregator() {
 
   const stopTailing = async (fileId: string) => {
     try {
-      await fetch('/api/logs/stop', {
+      await apiFetch('/api/logs/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fileId }),
@@ -100,7 +101,7 @@ export function LogAggregator() {
 
   const clearLogs = async () => {
     try {
-      await fetch('/api/logs/clear', {
+      await apiFetch('/api/logs/clear', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
@@ -147,7 +148,7 @@ export function LogAggregator() {
     setShowSuggestions(true);
     setSuggestionsLoading(true);
     try {
-      const res = await fetch('/api/logs/common-paths');
+      const res = await apiFetch('/api/logs/common-paths');
       const data = await res.json();
       setSuggestions(data.suggestions || []);
     } catch (error) {

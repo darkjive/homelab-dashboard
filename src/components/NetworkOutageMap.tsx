@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Activity, RefreshCw, WifiOff, Wifi } from 'lucide-react';
+import { apiFetch } from '../lib/api';
 
 interface ConnectivityCheck {
   name: string;
@@ -14,7 +15,7 @@ export function NetworkOutageMap() {
 
   const fetchConnectivity = async () => {
     try {
-      const res = await fetch('/api/connectivity');
+      const res = await apiFetch('/api/connectivity');
       if (!res.ok) return;
       const data = await res.json();
       setChecks(data.checks);

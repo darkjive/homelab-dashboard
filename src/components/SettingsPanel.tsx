@@ -13,8 +13,10 @@ import {
   Rss,
   Link as LinkIcon,
   Settings as SettingsIcon,
+  KeyRound,
 } from 'lucide-react';
 import { getSetting, getSettingJSON, setSetting, setSettingRaw } from '../lib/settings';
+import { getDashboardToken, setDashboardToken } from '../lib/api';
 import type { QuickLink } from './QuickLinks';
 
 interface SettingsPanelProps {
@@ -147,6 +149,7 @@ function GeneralSection() {
   const [weatherLocation, setWeatherLocation] = useState(() =>
     getSetting('weather-location', 'Munich')
   );
+  const [dashboardToken, setToken] = useState(() => getDashboardToken());
 
   return (
     <div className="space-y-6 max-w-md">
@@ -190,8 +193,29 @@ function GeneralSection() {
         </div>
       </Field>
 
+      <Field label="DASHBOARD TOKEN">
+        <div className="flex items-center gap-2">
+          <KeyRound className="w-4 h-4 text-gray-500 shrink-0" />
+          <input
+            type="password"
+            value={dashboardToken}
+            onChange={e => setToken(e.target.value)}
+            onBlur={() => setDashboardToken(dashboardToken.trim())}
+            onKeyDown={e => {
+              if (e.key === 'Enter') setDashboardToken(dashboardToken.trim());
+            }}
+            placeholder="only needed when backend is LAN-exposed"
+            autoComplete="off"
+            className={inputClass}
+          />
+        </div>
+      </Field>
+
       <p className="text-xs text-gray-600">
-        Changes apply automatically to the widgets. Public data only, no tokens.
+        GitHub username and weather use public data only. The dashboard token is sent as{' '}
+        <code className="text-cyber-cyan">X-Dashboard-Token</code> on destructive actions and is
+        only required if you set <code className="text-cyber-cyan">DASHBOARD_TOKEN</code> on a
+        LAN-exposed backend.
       </p>
     </div>
   );

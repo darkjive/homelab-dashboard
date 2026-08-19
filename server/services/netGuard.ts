@@ -13,7 +13,14 @@ export function isPrivateOrLoopbackHost(hostname: string): boolean {
   if (host === '::1' || host === '::' || host === '::ffff:127.0.0.1') return true;
 
   // IPv4 dotted-quad — strip any IPv4-in-IPv6 prefix
-  const v4 = host.startsWith('::ffff:') ? host.slice(7) : host;
+  let v4 = host.startsWith('::ffff:') ? host.slice(7) : host;
+  // ::ffff:aabb:ccdd  →  aa.bb.cc.dd  (IPv4-mapped in hex group notation)
+  const hexMapped = v4.match(/^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (hexMapped) {
+    const hi = parseInt(hexMapped[1], 16);
+    const lo = parseInt(hexMapped[2], 16);
+    v4 = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+  }
   const m = v4.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (m) {
     const [a, b] = [parseInt(m[1]), parseInt(m[2])].map(octet => {

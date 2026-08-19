@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Bot, Send, Trash2 } from 'lucide-react';
 import { getSetting, useSetting } from '../lib/settings';
+import { apiFetch } from '../lib/api';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -39,7 +40,7 @@ export function ChatBot() {
   useEffect(() => {
     const checkOllama = async () => {
       try {
-        const response = await fetch('/api/ollama/api/tags');
+        const response = await apiFetch('/api/ollama/api/tags');
         if (response.ok) {
           const data = await response.json();
           const modelNames =
@@ -113,7 +114,7 @@ export function ChatBot() {
 
     try {
       // Ollama API call (local, no API key needed)
-      const response = await fetch('/api/ollama/api/generate', {
+      const response = await apiFetch('/api/ollama/api/generate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

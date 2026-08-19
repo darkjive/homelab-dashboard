@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Container, Play, Square, AlertCircle, RefreshCw } from 'lucide-react';
 import type { DockerInfo } from '../../shared/types';
+import { apiFetch } from '../lib/api';
 
 export function DockerWidget() {
   const [dockerInfo, setDockerInfo] = useState<DockerInfo | null>(null);
@@ -9,7 +10,7 @@ export function DockerWidget() {
 
   const fetchDockerInfo = async () => {
     try {
-      const res = await fetch('/api/docker');
+      const res = await apiFetch('/api/docker');
       if (!res.ok) throw new Error('Failed to fetch Docker info');
 
       const data: DockerInfo = await res.json();

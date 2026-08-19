@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
 import { existsSync } from 'fs';
+import { timingSafeEqual } from 'crypto';
 import { resolve } from 'path';
 
 try {
@@ -71,12 +72,24 @@ function validateGitPath(userPath: string): string {
   return resolvedPath;
 }
 
+/**
+ * @types/express 5 types route params as `string | string[]`. A single
+ * `:name` segment is always a string at runtime; arrays collapse to '' so
+ * downstream allowlists reject them instead of silently stringifying.
+ */
+function oneParam(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? '' : (value ?? '');
+}
+
 const app = express();
 const PORT = parseInt(process.env.PORT || '3010', 10);
 // Bind to loopback by default. Set BIND_HOST=0.0.0.0 to expose on the LAN —
 // make sure you understand the consequences (no auth on any endpoint).
 const HOST = process.env.BIND_HOST || '127.0.0.1';
 const OLLAMA_BASE_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
+// Shared token guarding destructive endpoints (npm run, port kill, git write,
+// log tail, scrape). Leave empty for loopback-only use; REQUIRED for BIND_HOST=0.0.0.0.
+const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN || '';
 const server = createServer(app);
 
 // WebSocket server with proper configuration.
@@ -87,6 +100,12 @@ const wss = new WebSocketServer({
   server,
   path: '/ws',
   verifyClient: (info: { origin?: string; req: IncomingMessage }) => {
+    // Browsers cannot set headers on a WebSocket handshake, so the token
+    // travels as a query param here instead of X-Dashboard-Token.
+    if (DASHBOARD_TOKEN) {
+      const token = new URL(info.req.url || '/', 'http://localhost').searchParams.get('token');
+      if (!token || !safeEqual(token, DASHBOARD_TOKEN)) return false;
+    }
     const origin = info.origin || info.req.headers.origin;
     if (!origin) return true; // non-browser clients (curl, health checks)
     try {
@@ -150,7 +169,33 @@ app.use(
   })
 );
 
+// Single boundary for the whole API surface — new routes are covered by default
+// instead of needing to remember the guard. /health stays open so container and
+// uptime probes keep working without a token. Placed ahead of the body parser so
+// an unauthenticated client can never make us parse a 1 MB payload.
+app.use('/api', requireToken);
+
 app.use(express.json({ limit: '1mb' }));
+
+/** Length-safe constant-time string compare (timingSafeEqual throws on length mismatch). */
+function safeEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return timingSafeEqual(bufA, bufB);
+}
+
+// Guards the API when DASHBOARD_TOKEN is set. The gate covers reads as well as
+// writes: endpoints like /api/git/scan, /api/logs/lines and /api/ports expose
+// filesystem layout, log contents and running processes, so token-gating only
+// the destructive half would leave an exposed instance wide open. When no token
+// is configured the API stays open — fine for the loopback default.
+function requireToken(req: Request, res: Response, next: NextFunction) {
+  if (!DASHBOARD_TOKEN) return next(); // opt-in; no token configured → no gate
+  const provided = req.get('X-Dashboard-Token');
+  if (provided && safeEqual(provided, DASHBOARD_TOKEN)) return next();
+  return res.status(401).json({ error: 'Unauthorized — invalid or missing X-Dashboard-Token' });
+}
 
 // Generous limit that never bites the dashboard's own polling, but caps
 // runaway clients. No localhost exemption — with the default loopback bind
@@ -313,10 +358,11 @@ const OLLAMA_POST_ENDPOINTS = new Set(['generate', 'chat', 'show']);
 // GET endpoint for Ollama (health checks, listing models)
 app.get('/api/ollama/api/:endpoint', ollamaLimiter, async (req, res) => {
   try {
-    if (!OLLAMA_GET_ENDPOINTS.has(req.params.endpoint)) {
+    const endpoint = oneParam(req.params.endpoint);
+    if (!OLLAMA_GET_ENDPOINTS.has(endpoint)) {
       return res.status(403).json({ error: 'Ollama endpoint not allowed' });
     }
-    const ollamaPath = `/api/${req.params.endpoint}`;
+    const ollamaPath = `/api/${endpoint}`;
     const ollamaUrl = `${OLLAMA_BASE_URL}${ollamaPath}`;
 
     const response = await fetch(ollamaUrl, {
@@ -346,10 +392,11 @@ app.get('/api/ollama/api/:endpoint', ollamaLimiter, async (req, res) => {
 // POST endpoint for Ollama (chat, generate)
 app.post('/api/ollama/api/:endpoint', ollamaLimiter, async (req, res) => {
   try {
-    if (!OLLAMA_POST_ENDPOINTS.has(req.params.endpoint)) {
+    const endpoint = oneParam(req.params.endpoint);
+    if (!OLLAMA_POST_ENDPOINTS.has(endpoint)) {
       return res.status(403).json({ error: 'Ollama endpoint not allowed' });
     }
-    const ollamaPath = `/api/${req.params.endpoint}`;
+    const ollamaPath = `/api/${endpoint}`;
     const ollamaUrl = `${OLLAMA_BASE_URL}${ollamaPath}`;
 
     console.log(`[OLLAMA PROXY] ${req.method} ${ollamaPath}`);
@@ -740,7 +787,7 @@ app.post('/api/npm/run', generalLimiter, async (req, res) => {
 
 app.get('/api/npm/output/:processId', generalLimiter, async (req, res) => {
   try {
-    const processId = req.params.processId;
+    const processId = oneParam(req.params.processId);
     const output = getScriptOutput(processId);
     res.json(output);
   } catch (error) {
@@ -927,6 +974,11 @@ server.listen(PORT, HOST, () => {
   } else {
     console.log(
       `\n⚠️  WARNING: listening on ${HOST} — endpoints have NO AUTH. Anyone reachable can run git push, kill processes, run npm scripts, etc.\n`
+    );
+  }
+  if (!isLoopbackBind && !DASHBOARD_TOKEN) {
+    console.warn(
+      '[SECURITY] Non-loopback bind without DASHBOARD_TOKEN — destructive endpoints are UNAUTHENTICATED. Set DASHBOARD_TOKEN in .env.'
     );
   }
 });

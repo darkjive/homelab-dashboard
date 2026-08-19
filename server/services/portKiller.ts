@@ -1,8 +1,10 @@
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import type { DevPortInfo } from '../../shared/types.js';
 
-const execAsync = promisify(exec);
+// execFile (not exec) throughout: no shell, so PIDs and port numbers can never
+// be interpreted as command syntax.
+const execFileAsync = promisify(execFile);
 
 // Common dev ports to always check
 const DEV_PORTS = [3000, 3010, 4000, 4173, 5000, 5173, 5432, 8000, 8080, 8888, 9000, 27017];
@@ -10,7 +12,7 @@ const DEV_PORTS = [3000, 3010, 4000, 4173, 5000, 5173, 5432, 8000, 8080, 8888, 9
 // True if `lsof` is on PATH. Widget degrades to empty list if absent.
 export async function getPortKillerStatus(): Promise<{ available: boolean; error?: string }> {
   try {
-    await execAsync('command -v lsof');
+    await execFileAsync('lsof', ['-v']);
     return { available: true };
   } catch {
     return {
@@ -25,9 +27,10 @@ export async function getActiveDevPorts(): Promise<DevPortInfo[]> {
 
   try {
     // Use lsof to find processes listening on dev ports
-    const { stdout } = await execAsync(`lsof -iTCP -sTCP:LISTEN -P -n 2>/dev/null || true`, {
+    // lsof exits non-zero when nothing matches — that is an empty result, not a failure.
+    const { stdout } = await execFileAsync('lsof', ['-iTCP', '-sTCP:LISTEN', '-P', '-n'], {
       maxBuffer: 1024 * 1024,
-    });
+    }).catch(() => ({ stdout: '' }));
 
     const lines = stdout.split('\n').slice(1); // Skip header
 
@@ -64,8 +67,9 @@ export async function getActiveDevPorts(): Promise<DevPortInfo[]> {
     if (ports.length > 0) {
       const pids = [...new Set(ports.map(p => p.pid))].join(',');
       try {
-        const { stdout: psOutput } = await execAsync(
-          `ps -p ${pids} -o pid=,command= 2>/dev/null || true`,
+        const { stdout: psOutput } = await execFileAsync(
+          'ps',
+          ['-p', pids, '-o', 'pid=,command='],
           { maxBuffer: 1024 * 1024 }
         );
         const commands = new Map<number, string>();
@@ -91,19 +95,17 @@ export async function getActiveDevPorts(): Promise<DevPortInfo[]> {
 
 export async function killProcess(pid: number): Promise<{ success: boolean; message: string }> {
   try {
-    // Try graceful kill first (SIGTERM)
-    await execAsync(`kill ${pid}`);
+    // Try graceful kill first (SIGTERM). process.kill needs no subprocess at all.
+    process.kill(pid, 'SIGTERM');
 
     // Wait a bit to check if process is still alive
     await new Promise(resolve => setTimeout(resolve, 500));
 
     try {
-      await execAsync(`ps -p ${pid} 2>/dev/null`);
-      // Process still alive, force kill
-      await execAsync(`kill -9 ${pid}`);
+      process.kill(pid, 0); // signal 0 = liveness probe, throws ESRCH when gone
+      process.kill(pid, 'SIGKILL');
       return { success: true, message: `Process ${pid} force killed (SIGKILL)` };
     } catch {
-      // Process is dead (ps failed)
       return { success: true, message: `Process ${pid} terminated gracefully` };
     }
   } catch (error) {
