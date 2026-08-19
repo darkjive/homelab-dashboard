@@ -28,7 +28,9 @@ export default defineConfig({
         // Split the heavyweights out of the main chunk for better caching and
         // to stay under Rollup's 500 kB warning.
         manualChunks: {
-          react: ['react', 'react-dom'],
+          // react-dom/client + jsx-runtime must be listed explicitly — the bare
+          // package ids alone leave the chunk empty and React lands in a sibling.
+          react: ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client'],
           recharts: ['recharts'],
           grid: ['react-grid-layout'],
         },
